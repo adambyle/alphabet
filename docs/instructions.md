@@ -5,6 +5,13 @@ counterparts in Alpha, including Alpha instruction aliases.
 
 ## Machine instructions
 
+### `noop`
+
+Syntax: `noop`
+Opcode: `0x1F`
+
+No operation.
+
 ### `mov` and `movi`
 
 Syntax: `mov @R @A` and `movi @R IMM16` \
@@ -323,13 +330,20 @@ combination of `mov!` and `jmpr!`.
 addi @EXE @EXE IMM16
 ```
 
-### `call! @A` and `calli! IMM32`
+### `call! @A`
 
 ```
 mov @RET @EXE
-addi @RET 4
-jmp! @A        ; If call!
-jmpi! IMM32    ; If calli!
+addi @RET @RET 12
+jmp! @A
+```
+
+### `calli! IMM32`
+
+```
+mov @RET @EXE
+addi @RET @RET [12/16 depending on jmpi! expansion]
+jmpi! IMM32
 ```
 
 ### `ret!`
