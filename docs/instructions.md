@@ -1,4 +1,4 @@
-# List of machine instructions
+# List of machine instructions (Alpha language)
 
 This is a complete list of machine instructions and their
 counterparts in Alpha, including Alpha instruction aliases.
@@ -221,17 +221,17 @@ a subtraction and setting flags in `@CTL`, but does not store the result.
 Sets the zero flag if equal, negative flag if `@A < @B` (signed),
 and carry flag if `@A < @B` (unsigned).
 
-### `jmpez` and `jmpezi`
+### `jmpeq` and `jmpeqi`
 
-Syntax: `jmpez @A` and `jmpezi IMM16` \
+Syntax: `jmpeq @A` and `jmpeqi IMM16` \
 Opcode: `0x19` and `0x39`
 
 Jumps to the address in `@A` or the immediate address `IMM16` if the
 zero flag is set (values are equal).
 
-### `jmpnz` and `jmpnzi`
+### `jmpne` and `jmpnei`
 
-Syntax: `jmpnz @A` and `jmpnzi IMM16` \
+Syntax: `jmpne @A` and `jmpnei IMM16` \
 Opcode: `0x1A` and `0x3A`
 
 Jumps to the address in `@A` or the immediate address `IMM16` if the
@@ -270,3 +270,84 @@ Jumps to the address in `@A` or the immediate address `IMM16` if both
 the carry and zero flags are not set (unsigned greater than).
 
 ## Instruction aliases
+
+### `mov! @R IMM32`
+
+Alias for storing 32-bit immediate values into registers.
+
+```
+movui @R [Upper 16 bits]
+ori @R @R [Lower 16 bits]
+```
+
+### `jmp! @A`
+
+Alias for jumping directly to an instruction stored in a register.
+
+```
+mov @EXE @A
+```
+
+### `jmpi! IMM32`
+
+Alias for jumping directly to an instruction at an immediate address.
+
+If address is 16-bit:
+
+```
+movi @EXE IMM32
+```
+
+Otherwise:
+
+```
+movui @EXE [Upper 16 bits]
+ori @EXE @EXE [Lower 16 bits]
+```
+
+### `jmpr! @A`
+
+Alias for jumping a relative amount in the program.
+
+```
+add @EXE @EXE @A
+```
+
+### `jmpri! IMM16`
+
+Alias for jumping a relative amount in the program by an immediate amount.
+Jumping a 32-bit amount must be achieved using a
+combination of `mov!` and `jmpr!`.
+
+```
+addi @EXE @EXE IMM16
+```
+
+### `call! @A` and `calli! IMM32`
+
+```
+mov @RET @EXE
+addi @RET 4
+jmp! @A        ; If call!
+jmpi! IMM32    ; If calli!
+```
+
+### `ret!`
+
+```
+jmp! @RET
+```
+
+### `push! @R`
+
+```
+stwi @R @STK 0
+subi @STK @STK 4
+```
+
+### `pop! @R`
+
+```
+addi @STK @STK 4
+ldwi @R @STK 0
+```

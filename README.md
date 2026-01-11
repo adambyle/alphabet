@@ -50,10 +50,10 @@ Note that some instructions which are aliases break down into
 more than one instruction.
 - `@EXE`: **Instruction address** register (or program counter) points
 to the active instruction.
-- `@RET`: **Return address** register saves the address after a `call`
-instruction, and is jumped to with the `ret` instruction.
+- `@RET`: **Return address** register saves the address after a `call!`
+instruction, and is jumped to with the `ret!` instruction.
 - `@STK`: **Stack pointer** register points to the top of the stack
-and is controlled by `stk` instructions.
+and is controlled by `push!` and `pop!` instructions.
 - `@CTL`: **Status control** register stores system configuration
 andd status flags (see below).
 
@@ -67,19 +67,7 @@ are arithmetic result flags.
 - Bit 2: **Carry** flag.
 - Bit 3: **Overflow** flag.
 - Bit 4: **Divide by 0** flag.
-- Bit 5: Reserved but unused.
-
-The next 2 bits are reserved for stack control.
-
-- Bit 6: **Return address stack** flag. If enabled, the return address is
-automatically pushed and popped from the stack (as below).
-- Bit 7 is reserved but unused.
-
-The next 8 bits map to registers `@8` through `@15` for *automatic
-stack pushes and pops* on function calls. Bit 8 corresponds to `@8` and
-bit 15 corresponds to `@15`, etc. If the bit is 1, the register
-is automatically pushed at the `call` instruction and automatically
-popped at the `ret` instruction.
+- Bits 5-7: Unused.
 
 The next 2 bits make up a **status value** which represents execution state.
 Writing it can be used to control execution.
@@ -93,13 +81,13 @@ instruction to execute. Write 1 to unpause, 0 to restart.
 The next 6 bits contain an arbitrary **status code** for a finished program.
 A value of 0 communicates success, while anything else communicates error.
 
-The remaining 8 bits are reserved but unused.
+The remaining 16 bits are reserved but unused.
 
 The value of the `@CTL` register, like all other registers, starts at 0.
 
 ### Instruction format
 
-Instructions appear in 2 different formats.
+Instructions appear in 4 different formats.
 
 (Register R often receives the result of the operation.)
 
@@ -121,6 +109,36 @@ with `1`.
 Opcode Immediate value  Register args.
 6 bits 16 bits          10 bits (5 bits each)
 ```
+
+**JR-type** instructions involve register jump operations.
+
+```
+011XXX FF ------------------- AAAAA
+Opcode Flags  Unused          Register
+6 bits 2 bits 19 bits         5 bits
+```
+
+Flags:
+- Bit 0: Unsigned (0) or signed (1) value in register.
+- Bit 1: Direct (0) or relative (1) jump.
+
+A flags value of `10` is impossible.
+
+**JI-type** instructions involve immediate jump operations.
+
+```
+111XXX F - IIIIIIIIIIIIIIIIIIIIIIII
+Opcode Flag  Immediate value
+6 bits 1 bit 24 bits
+```
+
+Flag:
+- Value of 0: Direct jump.
+- Value of 1: Relative jump.
+
+Note for all **J-type** instructions: format excludes `XXX` being
+`000` (`cmp`) or `111` (`movui`).
+
 
 See the full [list of instructions](docs/instructions.md) for details.
 
