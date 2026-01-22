@@ -186,7 +186,7 @@ impl Block {
 
     /// Write a word of data to the block.
     pub fn write_word(&mut self, offset: u16, data: u32) {
-        if offset > u16::MAX - 1 {
+        if offset > u16::MAX - 3 {
             return;
         }
         let bytes = data.to_be_bytes();
@@ -396,9 +396,9 @@ impl Vm {
         let result = match instruction.op {
             ADD => r_op_1().wrapping_add(r_op_2()),
             SUB => r_op_1().wrapping_sub(r_op_2()),
-            SHL => r_op_1() << r_op_2(),
-            SHR => r_op_1() >> r_op_2(),
-            SAR => (r_op_1() as i32 >> r_op_2()) as u32,
+            SHL => r_op_1() << (r_op_2() & 0x1F),
+            SHR => r_op_1() >> (r_op_2() & 0x1F),
+            SAR => (r_op_1() as i32 >> (r_op_2() & 0x1F)) as u32,
             AND => r_op_1() & r_op_2(),
             OR => r_op_1() | r_op_2(),
             XOR => r_op_1() ^ r_op_2(),
@@ -439,9 +439,9 @@ impl Vm {
         let result = match instruction.op {
             ADDI => Some(r_op().wrapping_add(imm as u32)),
             SUBI => Some(r_op().wrapping_sub(imm as u32)),
-            SHLI => Some(r_op() << imm),
-            SHRI => Some(r_op() >> imm),
-            SARI => Some((r_op() as i32 >> imm) as u32),
+            SHLI => Some(r_op() << (imm & 0x1F)),
+            SHRI => Some(r_op() >> (imm & 0x1F)),
+            SARI => Some((r_op() as i32 >> (imm & 0x1F)) as u32),
             ANDI => Some(r_op() & (imm as u32)),
             ANDUI => Some(r_op() & ((imm as u32) << 16)),
             ORI => Some(r_op() | (imm as u32)),

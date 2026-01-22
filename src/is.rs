@@ -22,47 +22,47 @@ pub struct IType {
 pub mod op {
     /// No operation.
     pub const NOOP: u8 = 0x00;
-    
+
     // R-type.
-    
+
     /// Signed and unsigned addition.
     pub const ADD: u8 = 0x01;
     /// Signed and unsigned subtraction.
     pub const SUB: u8 = 0x02;
-    
+
     /// Logical bitshift left.
     pub const SHL: u8 = 0x03;
     /// Logical bitshift right.
     pub const SHR: u8 = 0x04;
     /// Arithmetic bitshift right.
     pub const SAR: u8 = 0x05;
-    
+
     /// Bitwise and.
     pub const AND: u8 = 0x06;
     /// Bitwise or.
     pub const OR: u8 = 0x08;
     /// Bitwise exclusive-or.
     pub const XOR: u8 = 0x0A;
-    
+
     /// Less-than comparison.
     pub const SLT: u8 = 0x0C;
     /// Less-than unsigned comparison.
     pub const SLTU: u8 = 0x0D;
-    
+
     // I-type.
-    
+
     /// Immediate unsigned value addition.
     pub const ADDI: u8 = 0x21;
     /// Immediate unsigned value subtraction.
     pub const SUBI: u8 = 0x22;
-    
+
     /// Immediate logical bitshift left.
     pub const SHLI: u8 = 0x23;
     /// Immediate logical bitshift right.
     pub const SHRI: u8 = 0x24;
     /// Immediate larithmetic bitshift right.
     pub const SARI: u8 = 0x25;
-    
+
     /// Immediate bitwise and, lower 16 bits.
     pub const ANDI: u8 = 0x26;
     /// Immediate bitwise and, upper 16 bits.
@@ -75,10 +75,10 @@ pub mod op {
     pub const XORI: u8 = 0x2A;
     /// Immediate bitwise exclusive-or, upper 16 bits.
     pub const XORUI: u8 = 0x2B;
-    
+
     /// Less-than immediate comparison.
     pub const SLTI: u8 = 0x2C;
-    
+
     /// Load word from memory.
     pub const LDW: u8 = 0x31;
     /// Load half-word from memory.
@@ -95,7 +95,7 @@ pub mod op {
     pub const STHW: u8 = 0x37;
     /// Store byte to memory.
     pub const STB: u8 = 0x38;
-    
+
     /// Jump and link by offset.
     pub const JMP: u8 = 0x39;
     /// Jump and link relative to register.
@@ -124,26 +124,32 @@ pub struct Instruction {
 impl Instruction {
     pub fn decode(encoded: u32) -> Self {
         const IMM_MASK: u32 = 0xFFFF;
-        const R_RESULT_MASK: u32 = 0b11111 << 21;
-        const R_OP_1_MASK: u32 = 0b11111 << 16;
-        const R_OP_2_MASK: u32 = 0b11111 << 11;
+        const REG_MASK: u32 = 0b11111;
 
         let op = (encoded >> 26) as u8;
         let payload = if op == 0x00 {
             Payload { noop: () }
         } else if is_op_r_type(op) {
             // R-type.
-            let r_result = (encoded & R_RESULT_MASK) as usize;
-            let r_op_1 = (encoded & R_OP_1_MASK) as usize;
-            let r_op_2 = (encoded & R_OP_2_MASK) as usize;
-            let payload = RType { r_result, r_op_1, r_op_2 };
+            let r_result = ((encoded >> 21) & REG_MASK) as usize;
+            let r_op_1 = ((encoded >> 16) & REG_MASK) as usize;
+            let r_op_2 = ((encoded >> 11) & REG_MASK) as usize;
+            let payload = RType {
+                r_result,
+                r_op_1,
+                r_op_2,
+            };
             Payload { r_type: payload }
         } else {
             // I-type.
-            let r_result = (encoded & R_RESULT_MASK) as usize;
-            let r_op = (encoded & R_OP_1_MASK) as usize;
+            let r_result = ((encoded >> 21) & REG_MASK) as usize;
+            let r_op = ((encoded >> 16) & REG_MASK) as usize;
             let imm = (encoded & IMM_MASK) as u16;
-            let payload = IType { r_result, r_op, imm };
+            let payload = IType {
+                r_result,
+                r_op,
+                imm,
+            };
             Payload { i_type: payload }
         };
 
