@@ -1,4 +1,8 @@
+//! Interface to Alphabet's virtual machine.
+
 use std::collections::HashMap;
+
+use crate::is::{Instruction, is_op_r_type, op::*};
 
 /// How many bytes are in each memory block.
 pub const BLOCK_SIZE: usize = 1 << 16;
@@ -14,7 +18,11 @@ pub const REGISTER_COUNT: usize = 32;
 /// system supports.
 pub const MAX_WORD_ADDRESS: u32 = (1 << 30) - 1;
 
+/// Byte contents of a memory block.
 type MemoryBlockBytes = [u8; BLOCK_SIZE];
+
+/// Flags marking dirty bits on byte
+/// locations in a memory block.
 type MemoryBlockFlags = [bool; BLOCK_SIZE];
 
 /// A minimal virtual I/O device controller.
@@ -115,10 +123,7 @@ impl Block {
             return 0;
         }
         let bytes = match self {
-            Self::Memory(memory) => [
-                memory.read_byte(offset + 0),
-                memory.read_byte(offset + 1),
-            ],
+            Self::Memory(memory) => [memory.read_byte(offset + 0), memory.read_byte(offset + 1)],
             Self::Io(controller) => [
                 controller.read_byte(offset + 0),
                 controller.read_byte(offset + 1),
@@ -339,7 +344,7 @@ impl Vm {
     }
 
     /// Get or create a block at the specified index.
-    /// 
+    ///
     /// If it doesn't exist, an empty memory block is created.
     pub fn get_block(&mut self, block_index: u16) -> &mut Block {
         self.blocks
@@ -384,9 +389,170 @@ impl Vm {
         self.blocks.insert(block_index, block);
     }
 
+    fn exec_r_type(&mut self, instruction: Instruction) -> InstructionResult {
+        let payload = unsafe { instruction.payload.r_type };
+        let r_op_1 = || self.read_register(payload.r_op_1);
+        let r_op_2 = || self.read_register(payload.r_op_2);
+        let result = match instruction.op {
+            ADD => r_op_1().wrapping_add(r_op_2()),
+            SUB => r_op_1().wrapping_sub(r_op_2()),
+            SHL => r_op_1() << r_op_2(),
+            SHR => r_op_1() >> r_op_2(),
+            SAR => (r_op_1() as i32 >> r_op_2()) as u32,
+            AND => r_op_1() & r_op_2(),
+            OR => r_op_1() | r_op_2(),
+            XOR => r_op_1() ^ r_op_2(),
+            SLT => {
+                if (r_op_1() as i32) < (r_op_2() as i32) {
+                    1
+                } else {
+                    0
+                }
+            }
+            SLTU => {
+                if r_op_1() < r_op_2() {
+                    1
+                } else {
+                    0
+                }
+            }
+            _ => {
+                return InstructionResult {
+                    valid: false,
+                    jumped: false,
+                };
+            }
+        };
+        self.write_register(payload.r_result, result);
+        InstructionResult {
+            valid: true,
+            jumped: false,
+        }
+    }
+
+    fn exec_i_type(&mut self, instruction: Instruction) -> InstructionResult {
+        let payload = unsafe { instruction.payload.i_type };
+        let r_op = || self.read_register(payload.r_op);
+        let r_src = || self.read_register(payload.r_result);
+        let imm = payload.imm;
+        let mut jumped = false;
+        let result = match instruction.op {
+            ADDI => Some(r_op().wrapping_add(imm as u32)),
+            SUBI => Some(r_op().wrapping_sub(imm as u32)),
+            SHLI => Some(r_op() << imm),
+            SHRI => Some(r_op() >> imm),
+            SARI => Some((r_op() as i32 >> imm) as u32),
+            ANDI => Some(r_op() & (imm as u32)),
+            ANDUI => Some(r_op() & ((imm as u32) << 16)),
+            ORI => Some(r_op() | (imm as u32)),
+            ORUI => Some(r_op() | ((imm as u32) << 16)),
+            XORI => Some(r_op() ^ (imm as u32)),
+            XORUI => Some(r_op() ^ ((imm as u32) << 16)),
+            SLTI => Some(if (r_op() as i32) < (imm as i16 as i32) {
+                1
+            } else {
+                0
+            }),
+            LDW => {
+                let addr = r_op().wrapping_add_signed(imm as i16 as i32);
+                let word = self.read_word(addr);
+                Some(word)
+            }
+            LDHW => {
+                let addr = r_op().wrapping_add_signed(imm as i16 as i32);
+                let word = self.read_half_word(addr) as i16 as i32 as u32;
+                Some(word)
+            }
+            LDHWU => {
+                let addr = r_op().wrapping_add_signed(imm as i16 as i32);
+                let word = self.read_half_word(addr) as u32;
+                Some(word)
+            }
+            LDB => {
+                let addr = r_op().wrapping_add_signed(imm as i16 as i32);
+                let word = self.read_byte(addr) as i8 as i32 as u32;
+                Some(word)
+            }
+            LDBU => {
+                let addr = r_op().wrapping_add_signed(imm as i16 as i32);
+                let word = self.read_byte(addr) as u32;
+                Some(word)
+            }
+            STW => {
+                let addr = r_op().wrapping_add_signed(imm as i16 as i32);
+                self.write_word(addr, r_src());
+                None
+            }
+            STHW => {
+                let addr = r_op().wrapping_add_signed(imm as i16 as i32);
+                self.write_half_word(addr, r_src() as u16);
+                None
+            }
+            STB => {
+                let addr = r_op().wrapping_add_signed(imm as i16 as i32);
+                self.write_byte(addr, r_src() as u8);
+                None
+            }
+            JMP => {
+                let ret = self.program_counter.wrapping_add(1) % MAX_WORD_ADDRESS;
+                self.program_counter =
+                    self.program_counter.wrapping_add_signed(imm as i16 as i32) % MAX_WORD_ADDRESS;
+                jumped = true;
+                Some(ret)
+            }
+            JMPR => {
+                let ret = self.program_counter.wrapping_add(1) % MAX_WORD_ADDRESS;
+                self.program_counter =
+                    r_op().wrapping_add_signed(imm as i16 as i32) % MAX_WORD_ADDRESS;
+                jumped = true;
+                Some(ret)
+            }
+            BEQ => {
+                if r_src() == r_op() {
+                    self.program_counter =
+                        self.program_counter.wrapping_add_signed(imm as i16 as i32)
+                            % MAX_WORD_ADDRESS;
+                    jumped = true;
+                }
+                None
+            }
+            BNE => {
+                if r_src() != r_op() {
+                    self.program_counter =
+                        self.program_counter.wrapping_add_signed(imm as i16 as i32)
+                            % MAX_WORD_ADDRESS;
+                    jumped = true;
+                }
+                None
+            }
+            _ => {
+                return InstructionResult {
+                    valid: false,
+                    jumped: false,
+                };
+            }
+        };
+        if let Some(result) = result {
+            self.write_register(payload.r_result, result);
+        }
+        InstructionResult {
+            valid: true,
+            jumped,
+        }
+    }
+
     /// Write a word of data to virtual memory.
-    pub fn decode_and_execute(&mut self, instruction: u32) -> InstructionResult {
-        todo!()
+    pub fn execute(&mut self, instruction: Instruction) -> InstructionResult {
+        if instruction.op == NOOP {
+            InstructionResult {
+                valid: true,
+                jumped: false,
+            }
+        } else if is_op_r_type(instruction.op) {
+            self.exec_r_type(instruction)
+        } else {
+            self.exec_i_type(instruction)
+        }
     }
 
     /// Tick I/O devices, run the next instruction,
@@ -394,9 +560,10 @@ impl Vm {
     pub fn step_forward(&mut self) {
         self.tick_io_devices();
         let instruction = self.read_word(self.program_counter * 4);
-        let result = self.decode_and_execute(instruction);
+        let instruction = Instruction::decode(instruction);
+        let result = self.execute(instruction);
         if !result.jumped {
-            self.program_counter = self.program_counter.wrapping_add(1);
+            self.program_counter = self.program_counter.wrapping_add(1) % MAX_WORD_ADDRESS;
         }
     }
 }
