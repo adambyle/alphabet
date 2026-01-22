@@ -5,16 +5,23 @@
 /// R-type instruction.
 #[derive(Clone, Copy)]
 pub struct RType {
+    /// The index of the result register.
     pub r_result: usize,
+    /// The index of the first operand register.
     pub r_op_1: usize,
+    /// The index of the second operand register.
     pub r_op_2: usize,
 }
 
 /// I-type instruction.
 #[derive(Clone, Copy)]
 pub struct IType {
+    /// The index of the result register (or source)
+    /// register for stores and comparison branches.
     pub r_result: usize,
+    /// The index of the operand register.
     pub r_op: usize,
+    /// The immediate value.
     pub imm: u16,
 }
 
@@ -106,22 +113,37 @@ pub mod op {
     pub const BNE: u8 = 0x3C;
 }
 
+/// Determine the type of an instruction
+/// based on the opcode. Returns true if
+/// R-type, false if I-type.
 pub const fn is_op_r_type(op: u8) -> bool {
     op < 0x20
 }
 
+/// The instruction data, excluding the opcode.
+/// The kind of data present is determined by the opcode.
 pub union Payload {
+    // Empty data (present on 0x00).
     pub noop: (),
+
+    // R-type instruction data (present for 0x01-0x1F).
     pub r_type: RType,
+
+    // I-type instruction data (present for 0x20-0x3F).
     pub i_type: IType,
 }
 
+/// A machine instruction.
 pub struct Instruction {
+    /// The machine instruction opcode (0x00-0x3F).
     pub op: u8,
+
+    /// The instruction data.
     pub payload: Payload,
 }
 
 impl Instruction {
+    /// Decode a machine instruction from binary.
     pub fn decode(encoded: u32) -> Self {
         const IMM_MASK: u32 = 0xFFFF;
         const REG_MASK: u32 = 0b11111;

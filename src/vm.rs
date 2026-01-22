@@ -27,9 +27,6 @@ type MemoryBlockFlags = [bool; BLOCK_SIZE];
 
 /// A minimal virtual I/O device controller.
 pub trait IoController {
-    /// Allow I/O device to update relevant state.
-    fn tick(&mut self);
-
     /// Read a byte of data from the controller.
     fn read_byte(&mut self, offset: u16) -> u8;
 
@@ -294,16 +291,6 @@ impl Vm {
         }
     }
 
-    /// Notify all I/O devices that they may update state.
-    pub fn tick_io_devices(&mut self) {
-        for i in &self.controller_block_keys {
-            let Some(Block::Io(controller)) = self.blocks.get_mut(i) else {
-                panic!("I/O controller not found at block index {i}");
-            };
-            controller.tick();
-        }
-    }
-
     fn block(&mut self, address: u32) -> Option<&mut Block> {
         let block_index = (address >> 16) as u16;
         self.blocks.get_mut(&block_index)
@@ -391,26 +378,26 @@ impl Vm {
 
     fn exec_r_type(&mut self, instruction: Instruction) -> InstructionResult {
         let payload = unsafe { instruction.payload.r_type };
-        let r_op_1 = || self.read_register(payload.r_op_1);
-        let r_op_2 = || self.read_register(payload.r_op_2);
+        let r_op_1 = self.read_register(payload.r_op_1 & 0x1F);
+        let r_op_2 = self.read_register(payload.r_op_2 & 0x1F);
         let result = match instruction.op {
-            ADD => r_op_1().wrapping_add(r_op_2()),
-            SUB => r_op_1().wrapping_sub(r_op_2()),
-            SHL => r_op_1() << (r_op_2() & 0x1F),
-            SHR => r_op_1() >> (r_op_2() & 0x1F),
-            SAR => (r_op_1() as i32 >> (r_op_2() & 0x1F)) as u32,
-            AND => r_op_1() & r_op_2(),
-            OR => r_op_1() | r_op_2(),
-            XOR => r_op_1() ^ r_op_2(),
+            ADD => r_op_1.wrapping_add(r_op_2),
+            SUB => r_op_1.wrapping_sub(r_op_2),
+            SHL => r_op_1 << (r_op_2 & 0x1F),
+            SHR => r_op_1 >> (r_op_2 & 0x1F),
+            SAR => (r_op_1 as i32 >> (r_op_2 & 0x1F)) as u32,
+            AND => r_op_1 & r_op_2,
+            OR => r_op_1 | r_op_2,
+            XOR => r_op_1 ^ r_op_2,
             SLT => {
-                if (r_op_1() as i32) < (r_op_2() as i32) {
+                if (r_op_1 as i32) < (r_op_2 as i32) {
                     1
                 } else {
                     0
                 }
             }
             SLTU => {
-                if r_op_1() < r_op_2() {
+                if r_op_1 < r_op_2 {
                     1
                 } else {
                     0
@@ -432,65 +419,65 @@ impl Vm {
 
     fn exec_i_type(&mut self, instruction: Instruction) -> InstructionResult {
         let payload = unsafe { instruction.payload.i_type };
-        let r_op = || self.read_register(payload.r_op);
-        let r_src = || self.read_register(payload.r_result);
+        let r_op = self.read_register(payload.r_op & 0x1F);
+        let r_src = self.read_register(payload.r_result & 0x1F);
         let imm = payload.imm;
         let mut jumped = false;
         let result = match instruction.op {
-            ADDI => Some(r_op().wrapping_add(imm as u32)),
-            SUBI => Some(r_op().wrapping_sub(imm as u32)),
-            SHLI => Some(r_op() << (imm & 0x1F)),
-            SHRI => Some(r_op() >> (imm & 0x1F)),
-            SARI => Some((r_op() as i32 >> (imm & 0x1F)) as u32),
-            ANDI => Some(r_op() & (imm as u32)),
-            ANDUI => Some(r_op() & ((imm as u32) << 16)),
-            ORI => Some(r_op() | (imm as u32)),
-            ORUI => Some(r_op() | ((imm as u32) << 16)),
-            XORI => Some(r_op() ^ (imm as u32)),
-            XORUI => Some(r_op() ^ ((imm as u32) << 16)),
-            SLTI => Some(if (r_op() as i32) < (imm as i16 as i32) {
+            ADDI => Some(r_op.wrapping_add(imm as u32)),
+            SUBI => Some(r_op.wrapping_sub(imm as u32)),
+            SHLI => Some(r_op << (imm & 0x1F)),
+            SHRI => Some(r_op >> (imm & 0x1F)),
+            SARI => Some((r_op as i32 >> (imm & 0x1F)) as u32),
+            ANDI => Some(r_op & (imm as u32)),
+            ANDUI => Some(r_op & ((imm as u32) << 16)),
+            ORI => Some(r_op | (imm as u32)),
+            ORUI => Some(r_op | ((imm as u32) << 16)),
+            XORI => Some(r_op ^ (imm as u32)),
+            XORUI => Some(r_op ^ ((imm as u32) << 16)),
+            SLTI => Some(if (r_op as i32) < (imm as i16 as i32) {
                 1
             } else {
                 0
             }),
             LDW => {
-                let addr = r_op().wrapping_add_signed(imm as i16 as i32);
+                let addr = r_op.wrapping_add_signed(imm as i16 as i32);
                 let word = self.read_word(addr);
                 Some(word)
             }
             LDHW => {
-                let addr = r_op().wrapping_add_signed(imm as i16 as i32);
+                let addr = r_op.wrapping_add_signed(imm as i16 as i32);
                 let word = self.read_half_word(addr) as i16 as i32 as u32;
                 Some(word)
             }
             LDHWU => {
-                let addr = r_op().wrapping_add_signed(imm as i16 as i32);
+                let addr = r_op.wrapping_add_signed(imm as i16 as i32);
                 let word = self.read_half_word(addr) as u32;
                 Some(word)
             }
             LDB => {
-                let addr = r_op().wrapping_add_signed(imm as i16 as i32);
+                let addr = r_op.wrapping_add_signed(imm as i16 as i32);
                 let word = self.read_byte(addr) as i8 as i32 as u32;
                 Some(word)
             }
             LDBU => {
-                let addr = r_op().wrapping_add_signed(imm as i16 as i32);
+                let addr = r_op.wrapping_add_signed(imm as i16 as i32);
                 let word = self.read_byte(addr) as u32;
                 Some(word)
             }
             STW => {
-                let addr = r_op().wrapping_add_signed(imm as i16 as i32);
-                self.write_word(addr, r_src());
+                let addr = r_op.wrapping_add_signed(imm as i16 as i32);
+                self.write_word(addr, r_src);
                 None
             }
             STHW => {
-                let addr = r_op().wrapping_add_signed(imm as i16 as i32);
-                self.write_half_word(addr, r_src() as u16);
+                let addr = r_op.wrapping_add_signed(imm as i16 as i32);
+                self.write_half_word(addr, r_src as u16);
                 None
             }
             STB => {
-                let addr = r_op().wrapping_add_signed(imm as i16 as i32);
-                self.write_byte(addr, r_src() as u8);
+                let addr = r_op.wrapping_add_signed(imm as i16 as i32);
+                self.write_byte(addr, r_src as u8);
                 None
             }
             JMP => {
@@ -503,12 +490,12 @@ impl Vm {
             JMPR => {
                 let ret = self.program_counter.wrapping_add(1) % MAX_WORD_ADDRESS;
                 self.program_counter =
-                    r_op().wrapping_add_signed(imm as i16 as i32) % MAX_WORD_ADDRESS;
+                    r_op.wrapping_add_signed(imm as i16 as i32) % MAX_WORD_ADDRESS;
                 jumped = true;
                 Some(ret)
             }
             BEQ => {
-                if r_src() == r_op() {
+                if r_src == r_op {
                     self.program_counter =
                         self.program_counter.wrapping_add_signed(imm as i16 as i32)
                             % MAX_WORD_ADDRESS;
@@ -517,7 +504,7 @@ impl Vm {
                 None
             }
             BNE => {
-                if r_src() != r_op() {
+                if r_src != r_op {
                     self.program_counter =
                         self.program_counter.wrapping_add_signed(imm as i16 as i32)
                             % MAX_WORD_ADDRESS;
@@ -558,7 +545,6 @@ impl Vm {
     /// Tick I/O devices, run the next instruction,
     /// and advance the program counter.
     pub fn step_forward(&mut self) {
-        self.tick_io_devices();
         let instruction = self.read_word(self.program_counter * 4);
         let instruction = Instruction::decode(instruction);
         let result = self.execute(instruction);
