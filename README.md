@@ -100,10 +100,10 @@ conventions.
 
 - `r1`-`r15` are **call-preserved** registers. If
 a routine must make use of them, it is responsible for
+restoring their values before returning control.
 - `r16`-`r30` are **call-clobbered** registers. Routines
 must push their values on the stack before a call if they
 wish to preserve them.
-restoring their values before returning control.
 - `r31` is the **return address**, alias `ra`.
 - `r32` is the **stack pointer**, alias `sp`.
 
@@ -115,5 +115,5 @@ Other important details/quirks about the Alphabet VM:
 the end of memory.
 - Instructions that change the program counter handle this
 wrapping automatically.
-- Programs should make no assumptions that registers will
-be initialized to 0.
+- Programs should make no assumptions that registers and
+memory will be be initialized to 0.
