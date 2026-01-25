@@ -38,8 +38,7 @@ Here's a brief project roadmap:
 
 ## Virtual machine
 
-The Alphabet VM is a 32-bit system. It has 32 general-purpose
-registers (some with conventions and aliases) and 4.3 gigabytes
+The Alphabet VM is a 32-bit system. It has 32 registers and 4.3 gigabytes
 of physical memory. It lacks an operating system, advanced memory
 features like a cache layer or paging, or an exception/trap/interrupt
 system. It also lacks instruction-level support for multiplication,

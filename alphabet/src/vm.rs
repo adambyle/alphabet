@@ -253,7 +253,7 @@ impl Vm {
     /// Set the program counter to the
     /// specified word address.
     pub fn seek(&mut self, address: u32) {
-        self.program_counter = address % MAX_WORD_ADDRESS;
+        self.program_counter = address & MAX_WORD_ADDRESS;
     }
 
     /// Get the value of the specified register.
@@ -481,16 +481,16 @@ impl Vm {
                 None
             }
             JMP => {
-                let ret = self.program_counter.wrapping_add(1) % MAX_WORD_ADDRESS;
+                let ret = (self.program_counter + 1) & MAX_WORD_ADDRESS;
                 self.program_counter =
-                    self.program_counter.wrapping_add_signed(imm as i16 as i32) % MAX_WORD_ADDRESS;
+                    self.program_counter.wrapping_add_signed(imm as i16 as i32) & MAX_WORD_ADDRESS;
                 jumped = true;
                 Some(ret)
             }
             JMPR => {
-                let ret = self.program_counter.wrapping_add(1) % MAX_WORD_ADDRESS;
+                let ret = (self.program_counter + 1) & MAX_WORD_ADDRESS;
                 self.program_counter =
-                    r_op.wrapping_add_signed(imm as i16 as i32) % MAX_WORD_ADDRESS;
+                    r_op.wrapping_add_signed(imm as i16 as i32) & MAX_WORD_ADDRESS;
                 jumped = true;
                 Some(ret)
             }
@@ -498,7 +498,7 @@ impl Vm {
                 if r_src == r_op {
                     self.program_counter =
                         self.program_counter.wrapping_add_signed(imm as i16 as i32)
-                            % MAX_WORD_ADDRESS;
+                            & MAX_WORD_ADDRESS;
                     jumped = true;
                 }
                 None
@@ -507,7 +507,7 @@ impl Vm {
                 if r_src != r_op {
                     self.program_counter =
                         self.program_counter.wrapping_add_signed(imm as i16 as i32)
-                            % MAX_WORD_ADDRESS;
+                            & MAX_WORD_ADDRESS;
                     jumped = true;
                 }
                 None
@@ -549,7 +549,7 @@ impl Vm {
         let instruction = Instruction::decode(instruction);
         let result = self.execute(instruction);
         if !result.jumped {
-            self.program_counter = self.program_counter.wrapping_add(1) % MAX_WORD_ADDRESS;
+            self.program_counter = (self.program_counter + 1) & MAX_WORD_ADDRESS;
         }
     }
 }
