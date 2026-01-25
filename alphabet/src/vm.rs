@@ -244,6 +244,14 @@ impl Vm {
         self.blocks.clear();
     }
 
+    /// Restart the program, resettings
+    /// the virtual machine's program counter
+    /// and registers.
+    pub fn restart(&mut self) {
+        self.program_counter = 0;
+        self.registers.fill(0);
+    }
+
     /// Get the word address of the next
     /// instruction to execute.
     pub fn program_counter(&self) -> u32 {
