@@ -270,6 +270,11 @@ impl Vm {
         self.registers[index % REGISTER_COUNT]
     }
 
+    /// Read the value of all regiters.
+    pub fn read_registers(&self) -> [u32; REGISTER_COUNT] {
+        self.registers
+    }
+
     /// Set the value of the specified register.
     pub fn write_register(&mut self, index: usize, word: u32) {
         let index = index % REGISTER_COUNT;

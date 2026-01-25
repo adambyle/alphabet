@@ -1,2 +1,3 @@
 [workspace]
-members = ["alphabet"]
+members = ["alphabet", "alphabet_tui"]
+resolver = "3"
