@@ -19,6 +19,8 @@ pub enum WriteMode {
     Standard,
     Highlighted,
     Bold,
+    Colored(style::Color),
+    Blocked(style::Color),
 }
 
 impl Ui {
@@ -89,6 +91,8 @@ impl Ui {
             WriteMode::Standard => text.reset(),
             WriteMode::Highlighted => text.reverse(),
             WriteMode::Bold => text.bold(),
+            WriteMode::Colored(color) => text.with(color).bold(),
+            WriteMode::Blocked(color) => text.on(color),
         };
         queue!(self.output, style::PrintStyledContent(content))?;
         Ok(())

@@ -177,4 +177,25 @@ impl Instruction {
 
         Self { op, payload }
     }
+
+    /// Encode machine instruction to binary.
+    pub fn encode(&self) -> u32 {
+        if self.op == 0 {
+            return 0;
+        }
+        let op = (self.op as u32) << 26;
+        if is_op_r_type(self.op) {
+            let payload = unsafe { self.payload.r_type };
+            let r_result = (payload.r_result as u32) << 21;
+            let r_op_1 = (payload.r_op_1 as u32) << 16;
+            let r_op_2 = (payload.r_op_2 as u32) << 11;
+            op | r_result | r_op_1 | r_op_2
+        } else {
+            let payload = unsafe { self.payload.i_type };
+            let r_result = (payload.r_result as u32) << 21;
+            let r_op = (payload.r_op as u32) << 16;
+            let imm = payload.imm as u32;
+            op | r_result | r_op | imm
+        }
+    }
 }

@@ -6,3 +6,4 @@ edition = "2024"
 [dependencies]
 alphabet = { path = "../alphabet" }
 crossterm = "0.29.0"
+native-dialog = "0.9.5"
