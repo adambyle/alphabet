@@ -8,7 +8,7 @@ The Alphabet virtual machine is intentionally barebones, having
 32 general-purpose registers and byte-addressed virtual memory
 broken into 65 thousand "blocks" of 65 kilobytes. That's it!
 Each block is either readable/writable memory or a memory-mapped
-virtual I/O device. There are 32 instructions (with room for 64),
+virtual I/O device. There are 35 instructions (with room for 64),
 including variants that embed 16-bit immediate values. The goal of
 this simplfied design is to make learning about interacting with low-level architecture,
 machine code, and assembly language as easy as "ABC".

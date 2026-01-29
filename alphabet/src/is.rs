@@ -111,7 +111,53 @@ pub mod op {
     pub const BEQ: u8 = 0x3B;
     /// Branch by offset if not equal.
     pub const BNE: u8 = 0x3C;
+
+    pub fn get_op_name(op: u8) -> Option<&'static str> {
+        let name = match op {
+            NOOP => "noop",
+            ADD => "add",
+            SUB => "sub",
+            SHL => "shl",
+            SHR => "shr",
+            SAR => "sar",
+            AND => "and",
+            OR => "or",
+            XOR => "xor",
+            SLT => "slt",
+            SLTU => "sltu",
+            ADDI => "addi",
+            SUBI => "subi",
+            SHLI => "shli",
+            SHRI => "shri",
+            SARI => "sari",
+            ANDI => "andi",
+            ANDUI => "andui",
+            ORI => "ori",
+            ORUI => "orui",
+            XORI => "xori",
+            XORUI => "xorui",
+            SLTI => "slti",
+            LDW => "ldw",
+            LDHW => "ldhw",
+            LDHWU => "ldhwu",
+            LDB => "ldb",
+            LDBU => "ldbu",
+            STW => "stw",
+            STHW => "sthw",
+            STB => "stb",
+            JMP => "jmp",
+            JMPR => "jmpr",
+            BEQ => "beq",
+            BNE => "bne",
+            _ => {
+                return None;
+            }
+        };
+        Some(name)
+    }
 }
+
+pub use op::*;
 
 /// Determine the type of an instruction
 /// based on the opcode. Returns true if
@@ -196,6 +242,39 @@ impl Instruction {
             let r_op = (payload.r_op as u32) << 16;
             let imm = payload.imm as u32;
             op | r_result | r_op | imm
+        }
+    }
+
+    /// Format the instruction as a string.
+    pub fn as_string(&self) -> Option<String> {
+        if self.op == NOOP {
+            return Some(String::from("noop"));
+        }
+        if is_op_r_type(self.op) {
+            let Some(op) = get_op_name(self.op) else {
+                return None;
+            };
+            let RType {
+                r_result,
+                r_op_1,
+                r_op_2,
+            } = unsafe { self.payload.r_type };
+            Some(format!("{op} r{r_result}, r{r_op_1}, r{r_op_2}"))
+        } else {
+            let Some(op) = get_op_name(self.op) else {
+                return None;
+            };
+            let IType {
+                r_result,
+                r_op,
+                imm,
+            } = unsafe { self.payload.i_type };
+            let instruction = match self.op {
+                JMP => format!("jmp r{r_result}, {imm:#04X}"),
+                LDW..=STB | JMPR => format!("{op} r{r_result}, {imm:#04X}(r{r_op})"),
+                _ => format!("{op} r{r_result}, r{r_op}, {imm:#04X}"),
+            };
+            Some(instruction)
         }
     }
 }
