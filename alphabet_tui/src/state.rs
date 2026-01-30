@@ -174,8 +174,13 @@ impl State {
             } else {
                 ui::WriteMode::Standard
             };
+            let register_name = match i {
+                30 => String::from("ra"),
+                31 => String::from("sp"),
+                i => format!("r{i}"),
+            };
             self.ui
-                .write_styled(9 + i, 2, &format!("r{i}"), ui::WriteMode::Bold)?;
+                .write_styled(9 + i, 2, &register_name, ui::WriteMode::Bold)?;
             self.ui
                 .write_styled(9 + i, 6, &format!("{register:08X}"), style)?;
             if highlight && !self.running {

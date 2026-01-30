@@ -83,8 +83,10 @@ pub mod op {
     /// Immediate bitwise exclusive-or, upper 16 bits.
     pub const XORUI: u8 = 0x2B;
 
-    /// Less-than immediate comparison.
+    /// Less-than immediate signed comparison.
     pub const SLTI: u8 = 0x2C;
+    /// Less-than immediate unsigned comparison.
+    pub const SLTUI: u8 = 0x2D;
 
     /// Load word from memory.
     pub const LDW: u8 = 0x31;
@@ -137,6 +139,7 @@ pub mod op {
             XORI => "xori",
             XORUI => "xorui",
             SLTI => "slti",
+            SLTUI => "sltui",
             LDW => "ldw",
             LDHW => "ldhw",
             LDHWU => "ldhwu",

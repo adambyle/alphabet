@@ -2,13 +2,14 @@
 
 *Alphabet* is an extremely simple virtual machine. It has a
 minimal instruction set and simplified memory-mapped
-I/O system into which users can "plug in" arbitrary devices.
+I/O system into which users can "plug in" arbitrary
+virtual devices.
 
 The Alphabet virtual machine is intentionally barebones, having
 32 general-purpose registers and byte-addressed virtual memory
 broken into 65 thousand "blocks" of 65 kilobytes. That's it!
 Each block is either readable/writable memory or a memory-mapped
-virtual I/O device. There are 35 instructions (with room for 64),
+virtual I/O device. There are 36 instructions (with room for 64),
 including variants that embed 16-bit immediate values. The goal of
 this simplfied design is to make learning about interacting with low-level architecture,
 machine code, and assembly language as easy as "ABC".
@@ -25,11 +26,12 @@ Here's a brief project roadmap:
 
 - [x] Virtual machine
 - [x] Instruction set implementation
-- [ ] Terminal interface
+- [x] Terminal interface
+- [ ] Assembler
 - [ ] Sample virtual I/O devices
 - [ ] Web interface using WASM
 - [ ] Web I/O devices
-- [ ] Code editor (for assembly and future languages)
+- [ ] Web code editor (for assembly and future languages)
 - [ ] Debugger
 - [ ] Dedicated language implementation
 - [ ] Assembler and compiler bootstrapping
@@ -75,7 +77,7 @@ R-type instructions have the following format:
 ```
 OOOOOO  RRRRR AAAAA BBBBB ..........
 Opcode  Registers (Result Operands)
-6 bits  10 bits
+6 bits  15 bits
 ```
 
 I-type instructions have the following format:
@@ -101,11 +103,11 @@ conventions.
 - `r1`-`r15` are **call-preserved** registers. If
 a routine must make use of them, it is responsible for
 restoring their values before returning control.
-- `r16`-`r30` are **call-clobbered** registers. Routines
+- `r16`-`r29` are **call-clobbered** registers. Routines
 must push their values on the stack before a call if they
 wish to preserve them.
-- `r31` is the **return address**, alias `ra`.
-- `r32` is the **stack pointer**, alias `sp`.
+- `r30` is the **return address**, alias `ra`.
+- `r31` is the **stack pointer**, alias `sp`.
 
 ### Miscellaneous
 
