@@ -45,6 +45,8 @@ features like a cache layer or paging, and an exception/trap/interrupt
 system. It also lacks instruction-level support for multiplication,
 division, and floating-point arithmetic. It is big-endian.
 
+### Memory
+
 The VM's memory is byte-addressed. It is divided into blocks which are
 2^16 bytes in size, which are allocated as needed behind the scenes or
 mapped to virtual I/O devices. While alignment for half-word and full-word
@@ -52,6 +54,13 @@ reads and writes is not strictly enforced, reads and writes across
 block boundaries will silently fail (reads return 0). Instructions
 dealing with instruction addresses (i.e. jumping and branching instructions)
 use word addresses instead of byte addresses, enforcing alignment.
+
+It is encouraged to follow these memory conventions:
+
+- Program begins at block `0x0000` (this is where the program counter starts).
+- `0xF` blocks are memory-mapped I/O devices.
+- The stack pointer should be initilized to `0xEFFFFFFC`
+and grows downwards (toward zero).
 
 ### Virtual I/O devices
 
