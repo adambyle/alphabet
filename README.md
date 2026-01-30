@@ -109,6 +109,56 @@ wish to preserve them.
 - `r30` is the **return address**, alias `ra`.
 - `r31` is the **stack pointer**, alias `sp`.
 
+### Languages
+
+Multiple languages will be designed specifically for the
+Alphabet VM. 6 are planned right now:
+
+- **Alpha** is an assembly language.
+- **Beta** is a basic imperative language.
+- **Gamma** is a structured imperative language with manual memory management.
+- **Delta** is an object-oriented language with garbage collection.
+- **Epsilon** is a functional language.
+- **Zeta** is an interpreted scripting language.
+
+The Zeta interpreter will itself be a program on the Alphabet VM
+that receives a script from an input device.
+
+### Images
+
+VM memory state can be serialized and deserialized into **images**.
+Images are the primary method of bundling a single program with
+its data. Loading an image resets and overwrites all of the VM's
+memory. Images do not save any data about I/O devices because they must
+be platform agnostic. For example, a game with graphics may be exported
+as an image, with the stipulation that it must be loaded on the Alphabet
+web client with a pixel display device mapped to block `0xF000` and a keyboard
+device to block `0xF001`. The platforms that run Alphabet may provide a means
+to save and load configurations with their input devices, but images are the
+most primitive means of representing VM state.
+
+Images may be represented as files with the `.abc` extension. All values
+in the image are big-endian. The layout of an image is a sequence of zero or more
+**entries**. Each entry has the following layout:
+
+- A 16-bit block index.
+- A 16-bit byte offset.
+- A 16-bit length value.
+- The data in the provided block, with the provided length, at the provided offset.
+
+There are a few things to note about the image layout if you are trying to build
+an image manually or are targeting the Alphabet VM for compilation.
+
+- If an entry is repeated for a block index, the last entry will overwrite
+all of the ones before it. In other words, you cannot construct multiple regions
+of memory within a block by having multiple entries for that block. This is
+because all the memory in the block outside the provided region will be zeroed.
+- If the offset plus the data length exceeds the size of a block (2^16), the
+data that would be written past the end of the block is ignored.
+
+If you're loading an image that was exported from the VM, you don't need to
+think about these issues.
+
 ### Miscellaneous
 
 Other important details/quirks about the Alphabet VM:
