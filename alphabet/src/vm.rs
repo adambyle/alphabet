@@ -453,11 +453,7 @@ impl Vm {
             } else {
                 0
             }),
-            SLTUI => Some(if r_op < imm as u32 {
-                1
-            } else {
-                0
-            })
+            SLTUI => Some(if r_op < imm as u32 { 1 } else { 0 }),
             LDW => {
                 let addr = r_op.wrapping_add_signed(imm as i16 as i32);
                 let word = self.read_word(addr);
