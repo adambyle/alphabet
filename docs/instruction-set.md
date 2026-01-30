@@ -47,7 +47,7 @@ I-type instructions perform an operation with respect to
 the value of 1 or 2 registers and a 16-bit signed or unsigned
 immediate value, sometimes storing the result in a second
 register. The semantics of the `R` register value
-depends on the particular instruction. The immediate value
+depend on the particular instruction. The immediate value
 may be used as an operand in an arithmetic operation or
 as an address offset.
 
@@ -98,7 +98,7 @@ Additional notes and clarifications:
 the value of `A` offset by the signed immediate value, with wrapping.
 The value to store is read from `R` for store instructions, and the value
 loaded is written to `R` for load instructions.
-* Jump and link instructions (`jmp` and `jmpr`) store the wrapped word-address
+* Jump-and-link instructions (`jmp` and `jmpr`) store the wrapped word-address
 of the instruction following the jump instruction (the return address)
 into `R`.
 * Jump and branch instructions operate with *word addresses*, meaning the

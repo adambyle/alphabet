@@ -48,7 +48,7 @@ division, and floating-point arithmetic. It is big-endian.
 The VM's memory is byte-addressed. It is divided into blocks which are
 2^16 bytes in size, which are allocated as needed behind the scenes or
 mapped to virtual I/O devices. While alignment for half-word and full-word
-reads and writes are not strictly enforced, reads and writes across
+reads and writes is not strictly enforced, reads and writes across
 block boundaries will silently fail (reads return 0). Instructions
 dealing with instruction addresses (i.e. jumping and branching instructions)
 use word addresses instead of byte addresses, enforcing alignment.
