@@ -10,14 +10,16 @@ than one Alpha source file may be assembled into a single
 image. Be aware that all source files have their cursor
 set to 0 by default.
 
+Named symbols declared by labels and `.equ` directives
+are shared between files.
+
 Alpha assembly may fail in the following ways:
 
 - An unrecognized instruction or directive name.
 - Invalid instruction or directive syntax.
 - Invalid register name.
 - Invalid immediate value.
-- Data or instructions would cross block
-boundaries.
+- Data would cross block boundaries.
 - Data or instructions would be placed beyond
 the last valid address (the address does not wrap).
 - The use of the `.org` directive, or the
@@ -75,7 +77,7 @@ signedness than the instruction using it.
 - Binary, octal, and hexadecimal immediates may only be made up of their
 respective digits, and must be prefixed with `0b`, `0o`, or `0x` respectively.
 - Text immediates must be zero, one, or two quoted [ASCII characters](docs/ascii.md),
-which are translated to their 16-bit representation. Single characters fill the lower bit.
+which are translated to their 16-bit representation. Single characters fill the lower byte.
 Omitted characters are zeroed.
 
 32-bit and 8-bit immediate values, which are allowed in some directives,
@@ -101,6 +103,8 @@ add r3, r1, r2
 
 This instruction adds the values of `r1` and `r2` and stores the result in `r3`.
 The commas are mandatory and all 3 register arguments must be present.
+
+The exception is the `noop` instruction, which has no arguments.
 
 ### I-type
 
@@ -153,7 +157,8 @@ valid directives.
 
 Labels have separate syntax from other directives. They consist only of
 a custom alphanumeric symbol (following the same rules as `.equ` symbols),
-followed by a `:` symbol. Labels and `.equ` directives may not share symbols.
+followed by a `:` symbol. A label symbol and a `.equ` symbol may ont have
+the same name.
 
 Labels assign the value of the cursor at their location to the named symbol.
 The label does not move the cursor. The symbol may be used in place of a 32-bit
@@ -173,8 +178,8 @@ addi r1, r0, 0x20
 LOOP:
   beq r1, r0, END   ; Translates to beq r1, r0, 3 
   subi r1, r1, 1
-  jmp LOOP          ; Translates to jmp -2
+  jmp r0, LOOP      ; Translates to jmp r0, -2
 
 END:
-  jmp 0             ; Loop here endlessly.
+  jmp r0, 0         ; Loop here endlessly.
 ```
