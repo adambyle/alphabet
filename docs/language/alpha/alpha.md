@@ -146,18 +146,18 @@ valid directives.
 |Directive|Behavior
 |-|-
 |`.equ <symbol>, <value>`|Declare the string of characters `symbol` to alias the specified immediate value (up to 32-bits). The symbol is valid wherever the aliased value would be a valid immediate value as an argument to an instruction or directive. `symbol` must consist only of alphanumeric characters and may not start with a digit. It is an error to declare the same symbol twice.
-|`.org <address>`|Move the cursor to `address`, which must be 32-bit unsigned immediate value.
+|`.org <address>`|Move the cursor to `address`, which must be a 32-bit unsigned immediate value.
 |`.word <value>`|Write the provided 32-bit immediate value at the cursor.
 |`.half <value>`|Write the provided 16-bit immediate value at the cursor.
 |`.byte <value>`|Write the provided 8-bit immediate value at the cursor.
-|`.string <value>`|Write the provided unlimited-length immediate text value (quoted) at the cursor.
+|`.string <value>`|Write the provided immediate text value (quoted) at the cursor. The maximum length is 2^16 characters.
 |`.space <value>`|Move the cursor the specified number of bytes. `value` must be a 32-bit unsigned immediate value.
 
 ### Labels
 
 Labels have separate syntax from other directives. They consist only of
 a custom alphanumeric symbol (following the same rules as `.equ` symbols),
-followed by a `:` symbol. A label symbol and a `.equ` symbol may ont have
+followed by a `:` symbol. A label symbol and a `.equ` symbol may not have
 the same name.
 
 Labels assign the value of the cursor at their location to the named symbol.
@@ -170,7 +170,7 @@ the offset of the label from the cursor at that instruction.
 It is an error for this calculated offset to be out of the valid
 16-bit-immediate range.
 
-An exmaple:
+An example:
 
 ```alpha
 addi r1, r0, 0x20
