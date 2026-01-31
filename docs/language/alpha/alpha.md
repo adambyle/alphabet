@@ -3,7 +3,7 @@
 The **Alpha** programming language is the dedicated
 assembly language for the Alphabet VM. It is the
 human-readable representation of Alphabet's
-[machine instructions](docs/instruction-set.md).
+[machine instructions](../../instruction-set.md).
 
 Alpha files have the `.alpha` file extension. More
 than one Alpha source file may be assembled into a single
@@ -76,7 +76,7 @@ signedness than the instruction using it.
 - Decimal immediates may be made up of only decimal digits.
 - Binary, octal, and hexadecimal immediates may only be made up of their
 respective digits, and must be prefixed with `0b`, `0o`, or `0x` respectively.
-- Text immediates must be zero, one, or two quoted [ASCII characters](docs/ascii.md),
+- Text immediates must be zero, one, or two quoted [ASCII characters](../../ascii.md),
 which are translated to their 16-bit representation. Single characters fill the lower byte.
 Omitted characters are zeroed.
 
@@ -88,7 +88,7 @@ numerical immediate values and the number of characters in text immediates diffe
 
 Alpha supports all of Alphabet's machine instructions and
 has no additional pseudo-instructions. The name and behavior
-of each instruction can be found [here](docs/instruction-set.md).
+of each instruction can be found [here](../../instruction-set.md).
 
 The syntax of an instruction depends on its type, although 
 
