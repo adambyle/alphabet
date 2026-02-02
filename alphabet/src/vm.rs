@@ -1,8 +1,8 @@
 //! Interface to Alphabet's virtual machine.
 
-use std::collections::HashMap;
+use std::{collections::HashMap, io::Read};
 
-use crate::is::{Instruction, is_op_r_type, op::*};
+use crate::is::{is_op_r_type, op::*, Instruction};
 
 /// How many bytes are in each memory block.
 pub const BLOCK_SIZE: usize = 1 << 16;
@@ -233,6 +233,57 @@ impl Vm {
             blocks: HashMap::new(),
             controller_block_keys: Vec::new(),
         }
+    }
+
+    /// Create a virtual machine with state initialized
+    /// from an image.
+    pub fn from_image(image: Image) -> Self {
+        let mut vm = Self::new();
+        for entry in image.entries {
+            // Ignore invalid entries.
+            if entry.start_offset > entry.end_offset {
+                continue;
+            }
+            let mut data = [0; BLOCK_SIZE];
+            let length = (entry.end_offset - entry.start_offset + 1) as usize;
+            let offset = entry.start_offset as usize;
+            for i in 0..length {
+                data[i + offset] = entry.data[i];
+            }
+            let block = Block::with_data(data);
+            vm.blocks.insert(entry.block_index, block);
+        }
+        vm
+    }
+
+    /// Generate an image, a snapshot of the VM's
+    /// state.
+    pub fn image(&self) -> Image {
+        let mut image = Image {
+            entries: Vec::new(),
+        };
+        for (index, block) in self.blocks.values().enumerate() {
+            let Block::Memory(mem) = block else {
+                continue;
+            };
+            let start_offset = mem.data.iter().position(|&b| b != 0);
+            let Some(start_offset) = start_offset else {
+                continue;
+            };
+
+            // Unwrap: guaranteed to be at least offset.
+            let end_offset = BLOCK_SIZE - 1 - mem.data.iter().rev().position(|&b| b != 0).unwrap();
+
+            let data = mem.data[start_offset..=end_offset].to_vec();
+            let image_entry = ImageEntry {
+                block_index: index as u16,
+                start_offset: start_offset as u16,
+                end_offset: end_offset as u16,
+                data,
+            };
+            image.entries.push(image_entry);
+        }
+        image
     }
 
     /// Reset the virtual machine's
@@ -564,6 +615,75 @@ impl Vm {
         let result = self.execute(instruction);
         if !result.jumped {
             self.program_counter = (self.program_counter + 1) & MAX_WORD_ADDRESS;
+        }
+    }
+}
+
+/// The contents of a block of
+/// memory in an image.
+pub struct ImageEntry {
+    pub block_index: u16,
+    pub start_offset: u16,
+    pub end_offset: u16,
+    pub data: Vec<u8>,
+}
+
+/// A representation of VM state.
+pub struct Image {
+    pub entries: Vec<ImageEntry>,
+}
+
+macro_rules! nextbyte {
+    ($bytes: expr, $byte:ident, $image:expr) => {
+        let Some(Ok($byte)) = $bytes.next() else {
+            return $image;
+        };
+    };
+}
+
+impl<R: Read> From<R> for Image {
+    fn from(reader: R) -> Self {
+        let mut image = Image {
+            entries: Vec::new(),
+        };
+        let mut bytes = reader.bytes();
+        loop {
+            // Extract block index bytes.
+            nextbyte!(bytes, bi_u, image);
+            nextbyte!(bytes, bi_l, image);
+
+            // Extract start offset bytes.
+            nextbyte!(bytes, so_u, image);
+            nextbyte!(bytes, so_l, image);
+
+            // Extract end offset bytes.
+            nextbyte!(bytes, eo_u, image);
+            nextbyte!(bytes, eo_l, image);
+
+            let block_index = u16::from_be_bytes([bi_u, bi_l]);
+            let start_offset = u16::from_be_bytes([so_u, so_l]);
+            let end_offset = u16::from_be_bytes([eo_u, eo_l]);
+
+            // Bad offset values are considered to be length 0.
+            if start_offset > end_offset {
+                continue;
+            }
+
+            let length = (end_offset - start_offset + 1) as usize;
+            let mut data = Vec::with_capacity(length);
+            for _ in 0..length {
+                let Some(Ok(byte)) = bytes.next() else {
+                    break;
+                };
+                data.push(byte);
+            }
+            let image_entry = ImageEntry {
+                block_index,
+                start_offset,
+                end_offset,
+                data,
+            };
+            image.entries.push(image_entry);
         }
     }
 }

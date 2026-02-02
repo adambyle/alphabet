@@ -151,8 +151,8 @@ in the image are big-endian. The layout of an image is a sequence of zero or mor
 **entries**. Each entry has the following layout:
 
 - A 16-bit block index.
-- A 16-bit byte offset.
-- A 16-bit length value.
+- A 16-bit start byte offset.
+- A 16-bit end byte offset (inclusive).
 - The data in the provided block, with the provided length, at the provided offset.
 
 There are a few things to note about the image layout if you are trying to build
