@@ -123,7 +123,7 @@ wish to preserve them.
 Multiple languages will be designed specifically for the
 Alphabet VM. 6 are planned right now:
 
-- **Alpha** is an assembly language.
+- [**Alpha**](docs/language/alpha/alpha.md) is an assembly language.
 - **Beta** is a basic imperative language.
 - **Gamma** is a structured imperative language with manual memory management.
 - **Delta** is an object-oriented language with garbage collection.
