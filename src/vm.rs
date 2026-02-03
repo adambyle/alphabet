@@ -2,7 +2,7 @@
 
 use std::{collections::HashMap, io::Read};
 
-use crate::is::{is_op_r_type, op::*, Instruction};
+use crate::is::{ITypePayload, Instruction, InstructionError, Operation, Payload, RTypePayload};
 
 /// How many bytes are in each memory block.
 pub const BLOCK_SIZE: usize = 1 << 16;
@@ -19,11 +19,11 @@ pub const REGISTER_COUNT: usize = 32;
 pub const MAX_WORD_ADDRESS: u32 = (1 << 30) - 1;
 
 /// Byte contents of a memory block.
-type MemoryBlockBytes = [u8; BLOCK_SIZE];
+pub type MemoryBlockBytes = [u8; BLOCK_SIZE];
 
 /// Flags marking dirty bits on byte
 /// locations in a memory block.
-type MemoryBlockFlags = [bool; BLOCK_SIZE];
+pub type MemoryBlockFlags = [bool; BLOCK_SIZE];
 
 /// A minimal virtual I/O device controller.
 pub trait IoController {
@@ -206,10 +206,6 @@ impl Block {
 
 /// The result of the VM executing a single instruction.
 pub struct InstructionResult {
-    // Whether the instruction could be decoded.
-    // (Invalid is no-op).
-    pub valid: bool,
-
     // Whether the program counter was overwritten.
     pub jumped: bool,
 }
@@ -440,182 +436,174 @@ impl Vm {
         self.blocks.insert(block_index, block);
     }
 
-    fn exec_r_type(&mut self, instruction: Instruction) -> InstructionResult {
-        let payload = unsafe { instruction.payload.r_type };
-        let r_op_1 = self.read_register(payload.r_op_1 & 0x1F);
-        let r_op_2 = self.read_register(payload.r_op_2 & 0x1F);
-        let result = match instruction.op {
-            ADD => r_op_1.wrapping_add(r_op_2),
-            SUB => r_op_1.wrapping_sub(r_op_2),
-            SHL => r_op_1 << (r_op_2 & 0x1F),
-            SHR => r_op_1 >> (r_op_2 & 0x1F),
-            SAR => (r_op_1 as i32 >> (r_op_2 & 0x1F)) as u32,
-            AND => r_op_1 & r_op_2,
-            OR => r_op_1 | r_op_2,
-            XOR => r_op_1 ^ r_op_2,
-            SLT => {
-                if (r_op_1 as i32) < (r_op_2 as i32) {
+    const SHIFT_MASK: u32 = 0x1F;
+
+    fn exec_r_type(&mut self, operation: Operation, payload: &RTypePayload) -> InstructionResult {
+        let r_a = self.read_register(payload.register_a_index());
+        let r_b = self.read_register(payload.register_b_index());
+
+        let result = match operation.opcode() {
+            Operation::ADD_CODE => r_a.wrapping_add(r_b),
+            Operation::SUB_CODE => r_a.wrapping_sub(r_b),
+            Operation::SHL_CODE => r_a << (r_b & Self::SHIFT_MASK),
+            Operation::SHR_CODE => r_a >> (r_b & Self::SHIFT_MASK),
+            Operation::SAR_CODE => (r_a as i32 >> (r_b & Self::SHIFT_MASK)) as u32,
+            Operation::AND_CODE => r_a & r_b,
+            Operation::OR_CODE => r_a | r_b,
+            Operation::XOR_CODE => r_a ^ r_b,
+            Operation::SLT_CODE => {
+                if (r_a as i32) < (r_b as i32) {
                     1
                 } else {
                     0
                 }
             }
-            SLTU => {
-                if r_op_1 < r_op_2 {
+            Operation::SLTU_CODE => {
+                if r_a < r_b {
                     1
                 } else {
                     0
                 }
             }
-            _ => {
-                return InstructionResult {
-                    valid: false,
-                    jumped: false,
-                };
-            }
+            _ => panic!("invalid R-type opcode"),
         };
-        self.write_register(payload.r_result, result);
-        InstructionResult {
-            valid: true,
-            jumped: false,
-        }
+        self.write_register(payload.register_r_index(), result);
+        InstructionResult { jumped: false }
     }
 
-    fn exec_i_type(&mut self, instruction: Instruction) -> InstructionResult {
-        let payload = unsafe { instruction.payload.i_type };
-        let r_op = self.read_register(payload.r_op & 0x1F);
-        let r_src = self.read_register(payload.r_result & 0x1F);
-        let imm = payload.imm;
+    fn exec_i_type(&mut self, operation: Operation, payload: &ITypePayload) -> InstructionResult {
+        let r_r = self.read_register(payload.register_r_index());
+        let r_a = self.read_register(payload.register_a_index());
+        let imm = payload.immediate_value();
         let mut jumped = false;
-        let result = match instruction.op {
-            ADDI => Some(r_op.wrapping_add(imm as u32)),
-            SUBI => Some(r_op.wrapping_sub(imm as u32)),
-            SHLI => Some(r_op << (imm & 0x1F)),
-            SHRI => Some(r_op >> (imm & 0x1F)),
-            SARI => Some((r_op as i32 >> (imm & 0x1F)) as u32),
-            ANDI => Some(r_op & (imm as u32)),
-            ANDUI => Some(r_op & ((imm as u32) << 16)),
-            ORI => Some(r_op | (imm as u32)),
-            ORUI => Some(r_op | ((imm as u32) << 16)),
-            XORI => Some(r_op ^ (imm as u32)),
-            XORUI => Some(r_op ^ ((imm as u32) << 16)),
-            SLTI => Some(if (r_op as i32) < (imm as i16 as i32) {
+
+        let result = match operation.opcode() {
+            Operation::ADDI_CODE => Some(r_a.wrapping_add(imm as u32)),
+            Operation::SUBI_CODE => Some(r_a.wrapping_sub(imm as u32)),
+            Operation::SHLI_CODE => Some(r_a << (imm & Self::SHIFT_MASK as u16)),
+            Operation::SHRI_CODE => Some(r_a >> (imm & Self::SHIFT_MASK as u16)),
+            Operation::SARI_CODE => Some((r_a as i32 >> (imm & Self::SHIFT_MASK as u16)) as u32),
+            Operation::ANDI_CODE => Some(r_a & (imm as u32)),
+            Operation::ANDUI_CODE => Some(r_a & ((imm as u32) << 16)),
+            Operation::ORI_CODE => Some(r_a | (imm as u32)),
+            Operation::ORUI_CODE => Some(r_a | ((imm as u32) << 16)),
+            Operation::XORI_CODE => Some(r_a ^ (imm as u32)),
+            Operation::XORUI_CODE => Some(r_a ^ ((imm as u32) << 16)),
+            Operation::SLTI_CODE => Some(if (r_a as i32) < (imm as i16 as i32) {
                 1
             } else {
                 0
             }),
-            SLTUI => Some(if r_op < imm as u32 { 1 } else { 0 }),
-            LDW => {
-                let addr = r_op.wrapping_add_signed(imm as i16 as i32);
+            Operation::SLTUI_CODE => Some(if r_a < imm as u32 { 1 } else { 0 }),
+            Operation::LDW_CODE => {
+                let addr = r_a.wrapping_add_signed(imm as i16 as i32);
                 let word = self.read_word(addr);
                 Some(word)
             }
-            LDHW => {
-                let addr = r_op.wrapping_add_signed(imm as i16 as i32);
+            Operation::LDHW_CODE => {
+                let addr = r_a.wrapping_add_signed(imm as i16 as i32);
                 let word = self.read_half_word(addr) as i16 as i32 as u32;
                 Some(word)
             }
-            LDHWU => {
-                let addr = r_op.wrapping_add_signed(imm as i16 as i32);
+            Operation::LDHWU_CODE => {
+                let addr = r_a.wrapping_add_signed(imm as i16 as i32);
                 let word = self.read_half_word(addr) as u32;
                 Some(word)
             }
-            LDB => {
-                let addr = r_op.wrapping_add_signed(imm as i16 as i32);
+            Operation::LDB_CODE => {
+                let addr = r_a.wrapping_add_signed(imm as i16 as i32);
                 let word = self.read_byte(addr) as i8 as i32 as u32;
                 Some(word)
             }
-            LDBU => {
-                let addr = r_op.wrapping_add_signed(imm as i16 as i32);
+            Operation::LDBU_CODE => {
+                let addr = r_a.wrapping_add_signed(imm as i16 as i32);
                 let word = self.read_byte(addr) as u32;
                 Some(word)
             }
-            STW => {
-                let addr = r_op.wrapping_add_signed(imm as i16 as i32);
-                self.write_word(addr, r_src);
+            Operation::STW_CODE => {
+                let addr = r_a.wrapping_add_signed(imm as i16 as i32);
+                self.write_word(addr, r_r);
                 None
             }
-            STHW => {
-                let addr = r_op.wrapping_add_signed(imm as i16 as i32);
-                self.write_half_word(addr, r_src as u16);
+            Operation::STHW_CODE => {
+                let addr = r_a.wrapping_add_signed(imm as i16 as i32);
+                self.write_half_word(addr, r_r as u16);
                 None
             }
-            STB => {
-                let addr = r_op.wrapping_add_signed(imm as i16 as i32);
-                self.write_byte(addr, r_src as u8);
+            Operation::STB_CODE => {
+                let addr = r_a.wrapping_add_signed(imm as i16 as i32);
+                self.write_byte(addr, r_r as u8);
                 None
             }
-            JMP => {
+            Operation::JMP_CODE => {
                 let ret = (self.program_counter + 1) & MAX_WORD_ADDRESS;
-                self.program_counter =
-                    self.program_counter.wrapping_add_signed(imm as i16 as i32) & MAX_WORD_ADDRESS;
+                self.seek(self.program_counter.wrapping_add_signed(imm as i16 as i32));
                 jumped = true;
                 Some(ret)
             }
-            JMPR => {
+            Operation::JMPR_CODE => {
                 let ret = (self.program_counter + 1) & MAX_WORD_ADDRESS;
-                self.program_counter =
-                    r_op.wrapping_add_signed(imm as i16 as i32) & MAX_WORD_ADDRESS;
+                self.seek(r_a.wrapping_add_signed(imm as i16 as i32));
                 jumped = true;
                 Some(ret)
             }
-            BEQ => {
-                if r_src == r_op {
-                    self.program_counter =
-                        self.program_counter.wrapping_add_signed(imm as i16 as i32)
-                            & MAX_WORD_ADDRESS;
+            Operation::BEQ_CODE => {
+                if r_r == r_a {
+                    self.seek(self.program_counter.wrapping_add_signed(imm as i16 as i32));
                     jumped = true;
                 }
                 None
             }
-            BNE => {
-                if r_src != r_op {
-                    self.program_counter =
-                        self.program_counter.wrapping_add_signed(imm as i16 as i32)
-                            & MAX_WORD_ADDRESS;
+            Operation::BNE_CODE => {
+                if r_r != r_a {
+                    self.seek(self.program_counter.wrapping_add_signed(imm as i16 as i32));
                     jumped = true;
                 }
                 None
             }
-            _ => {
-                return InstructionResult {
-                    valid: false,
-                    jumped: false,
-                };
-            }
+            _ => panic!("invalid I-type opcode"),
         };
         if let Some(result) = result {
-            self.write_register(payload.r_result, result);
+            self.write_register(payload.register_r_index(), result);
         }
-        InstructionResult {
-            valid: true,
-            jumped,
-        }
+        InstructionResult { jumped }
     }
 
     /// Write a word of data to virtual memory.
-    pub fn execute(&mut self, instruction: Instruction) -> InstructionResult {
-        if instruction.op == NOOP {
-            InstructionResult {
-                valid: true,
-                jumped: false,
-            }
-        } else if is_op_r_type(instruction.op) {
-            self.exec_r_type(instruction)
-        } else {
-            self.exec_i_type(instruction)
+    pub fn execute(&mut self, instruction: &Instruction) -> InstructionResult {
+        let operation = instruction.operation();
+        let payload = instruction.payload();
+        match payload {
+            Payload::Noop(_) => InstructionResult { jumped: false },
+            Payload::RType(payload) => self.exec_r_type(operation, payload),
+            Payload::IType(payload) => self.exec_i_type(operation, payload),
         }
     }
 
-    /// Tick I/O devices, run the next instruction,
-    /// and advance the program counter.
-    pub fn step_forward(&mut self) {
+    /// Move the program counter forward one instruction.
+    pub fn advance(&mut self) {
+        self.seek(self.program_counter + 1);
+    }
+
+    /// Run the next instruction, and advance the program counter.
+    ///
+    /// If the instruction is invalid, the program counter is still advanced.
+    pub fn execute_and_advance(
+        &mut self,
+    ) -> Result<(Instruction, InstructionResult), InstructionError> {
         let instruction = self.read_word(self.program_counter * 4);
-        let instruction = Instruction::decode(instruction);
-        let result = self.execute(instruction);
+        let instruction = match Instruction::decode(instruction) {
+            Ok(instruction) => instruction,
+            Err(err) => {
+                self.advance();
+                return Err(err);
+            }
+        };
+        let result = self.execute(&instruction);
         if !result.jumped {
-            self.program_counter = (self.program_counter + 1) & MAX_WORD_ADDRESS;
+            self.advance();
         }
+        Ok((instruction, result))
     }
 }
 
