@@ -123,7 +123,7 @@ wish to preserve them.
 Multiple languages will be designed specifically for the
 Alphabet VM. 6 are planned right now:
 
-- **Alpha** is an assembly language.
+- [**Alpha**](docs/language/alpha/alpha.md) is an assembly language.
 - **Beta** is a basic imperative language.
 - **Gamma** is a structured imperative language with manual memory management.
 - **Delta** is an object-oriented language with garbage collection.
@@ -151,8 +151,8 @@ in the image are big-endian. The layout of an image is a sequence of zero or mor
 **entries**. Each entry has the following layout:
 
 - A 16-bit block index.
-- A 16-bit byte offset.
-- A 16-bit length value.
+- A 16-bit start byte offset.
+- A 16-bit end byte offset (inclusive).
 - The data in the provided block, with the provided length, at the provided offset.
 
 There are a few things to note about the image layout if you are trying to build

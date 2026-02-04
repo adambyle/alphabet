@@ -1,3 +1,7 @@
-[workspace]
-members = ["alphabet", "alphabet_tui"]
-resolver = "3"
+[package]
+name = "alphabet"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+crossterm = "0.29.0"

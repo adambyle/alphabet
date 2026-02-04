@@ -97,7 +97,7 @@ fn main() -> io::Result<()> {
         if state.running {
             // Advance some number of cycles.
             for _ in 0..CYCLES_PER_TICK {
-                state.vm.step_forward();
+                state.vm.execute_and_advance();
                 if state.breakpoints.contains(&state.vm.program_counter()) {
                     state.running = false;
                     any_events = true;
@@ -222,7 +222,7 @@ fn main() -> io::Result<()> {
             }
             if key_code.is_char('s') {
                 let do_jump = state.is_pc_visible();
-                state.vm.step_forward();
+                state.vm.execute_and_advance();
                 if do_jump {
                     state.show_pc();
                 }
