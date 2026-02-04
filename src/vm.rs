@@ -479,22 +479,11 @@ impl Vm {
         true
     }
 
-<<<<<<< HEAD:alphabet/src/vm.rs
-    fn exec_r_type(&mut self, instruction: Instruction) -> InstructionResult {
-        let payload = unsafe { instruction.payload.r_type };
-        let r_op_1 = self.read_register(payload.r_op_1 & 0x1F);
-        let r_op_2 = self.read_register(payload.r_op_2 & 0x1F);
-        let result = match instruction.op {
-            ADD => r_op_1.wrapping_add(r_op_2),
-            SUB => r_op_1.wrapping_sub(r_op_2),
-            SHL => r_op_1 << (r_op_2 & 0x1F),
-            SHR => r_op_1 >> (r_op_2 & 0x1F),
-            SAR => (r_op_1 as i32 >> (r_op_2 & 0x1F)) as u32,
-            AND => r_op_1 & r_op_2,
-            OR => r_op_1 | r_op_2,
-            XOR => r_op_1 ^ r_op_2,
-            SLT => {
-                if (r_op_1 as i32) < (r_op_2 as i32) {
+    const SHIFT_MASK: u32 = 0x1F;
+
+    fn exec_r_type(&mut self, operation: Operation, payload: &RTypePayload) -> InstructionResult {
+        let r_a = self.register(payload.register_a_index());
+        let r_b = self.register(payload.register_b_index());
 
         let result = match operation.opcode() {
             Operation::ADD_CODE => r_a.wrapping_add(r_b),
@@ -507,7 +496,6 @@ impl Vm {
             Operation::XOR_CODE => r_a ^ r_b,
             Operation::SLT_CODE => {
                 if (r_a as i32) < (r_b as i32) {
->>>>>>> Stashed changes:src/vm.rs
                     1
                 } else {
                     0
@@ -641,10 +629,9 @@ impl Vm {
         }
     }
 
-<<<<<<< HEAD:alphabet/src/vm.rs
     /// Move the program counter forward one instruction.
     pub fn advance(&mut self) {
-        self.seek(self.program_counter + 1);
+        self.set_program_counter(self.program_counter + 1);
     }
 
     /// Run the next instruction, and advance the program counter.
@@ -653,7 +640,6 @@ impl Vm {
     pub fn execute_and_advance(
         &mut self,
     ) -> Result<(Instruction, InstructionResult), InstructionError> {
->>>>>>> Stashed changes:src/vm.rs
         let instruction = self.read_word(self.program_counter * 4);
         let instruction = match Instruction::decode(instruction) {
             Ok(instruction) => instruction,
@@ -664,8 +650,6 @@ impl Vm {
         };
         let result = self.execute(&instruction);
         if !result.jumped {
-<<<<<<< HEAD:alphabet/src/vm.rs
-            self.program_counter = (self.program_counter + 1) & MAX_WORD_ADDRESS;
             self.advance();
         }
         Ok((instruction, result))
@@ -803,7 +787,6 @@ impl<R: Read> From<R> for Image {
                 data,
             };
             image.entries.push(image_entry);
->>>>>>> Stashed changes:src/vm.rs
         }
     }
 }
