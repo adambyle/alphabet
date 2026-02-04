@@ -21,6 +21,13 @@ pub const MAX_WORD_ADDRESS: u32 = (1 << 30) - 1;
 /// Byte contents of a memory block.
 pub type BlockBytes = [u8; BLOCK_SIZE];
 
+fn write_memory_bytes(block_bytes: &mut BlockBytes, new_bytes: &[u8], offset: u16) {
+    let offset = offset as usize;
+    let end = offset + new_bytes.len();
+    let target = &mut block_bytes[offset..end];
+    target.copy_from_slice(new_bytes);
+}
+
 /// A minimal virtual I/O device controller.
 ///
 /// A virtual I/O controller must handle the behavior of
@@ -221,6 +228,44 @@ impl Block {
                 controller.write_byte(offset + 3, bytes[3]);
             }
         };
+    }
+
+    /// Write an arbitrary number of bytes into the block.
+    ///
+    /// Returns the bytes that were unwritten, because they could not fit.
+    pub fn write_bytes<'a>(&mut self, offset: u16, bytes: &'a [u8]) -> &'a [u8] {
+        if bytes.is_empty() {
+            return bytes;
+        }
+
+        // Bytes must be cutoff if they cannot fit.
+        let end = BLOCK_SIZE - offset as usize;
+        let bytes_left = &bytes[end..];
+        let new_bytes = &bytes[..end];
+
+        match self {
+            Self::Empty => {
+                let non_zero = new_bytes.iter().any(|&b| b != 0);
+                if !non_zero {
+                    return bytes_left;
+                }
+                let mut block_bytes = [0; BLOCK_SIZE];
+                write_memory_bytes(&mut block_bytes, new_bytes, offset);
+                *self = Block::with_data(block_bytes);
+            }
+            Self::Memory(memory) => {
+                write_memory_bytes(memory, new_bytes, offset);
+            }
+            Self::Io(controller) => {
+                let mut offset = offset;
+                for &byte in new_bytes {
+                    controller.write_byte(offset, byte);
+                    offset += 1;
+                }
+            }
+        }
+
+        bytes_left
     }
 }
 
@@ -477,6 +522,23 @@ impl Vm {
         let data = instruction.encode();
         block.write_word(offset, data);
         true
+    }
+
+    /// Write an arbitrary number of bytes to memory, starting
+    /// at the specified address. The unwritten bytes are returned,
+    /// as writing does not wrap around if the last address is reached.
+    pub fn write_bytes<'a>(&mut self, address: u32, bytes: &'a [u8]) -> &'a [u8] {
+        let mut bytes = bytes;
+        let mut block_index = (address >> 16) as u16;
+        let mut offset = (address & 0xFFFF) as u16;
+        loop {
+            bytes = self.blocks[block_index as usize].write_bytes(offset, bytes);
+            if bytes.is_empty() || block_index == u16::MAX {
+                return bytes;
+            }
+            block_index += 1;
+            offset = 0;
+        }
     }
 
     const SHIFT_MASK: u32 = 0x1F;
