@@ -1,6 +1,6 @@
 use std::{collections::HashSet, io, time::Duration};
 
-use alphabet::{is, vm};
+use alphabet::vm;
 use crossterm::event;
 
 use crate::state::{Cursor, Editing, State, Window};
@@ -10,44 +10,6 @@ mod ui;
 
 const CYCLES_PER_TICK: usize = 0x10000;
 const PAGE_SIZE: u32 = 4 * 32;
-
-// Debug.
-fn write_r_type(
-    state: &mut State,
-    addr: u32,
-    op: u8,
-    r_result: usize,
-    r_op_1: usize,
-    r_op_2: usize,
-) {
-    let instruction = is::Instruction {
-        op,
-        payload: is::Payload {
-            r_type: is::RType {
-                r_result,
-                r_op_1,
-                r_op_2,
-            },
-        },
-    };
-    let word = instruction.encode();
-    state.vm.write_word(addr, word);
-}
-
-fn write_i_type(state: &mut State, addr: u32, op: u8, r_result: usize, r_op: usize, imm: u16) {
-    let instruction = is::Instruction {
-        op,
-        payload: is::Payload {
-            i_type: is::IType {
-                r_result,
-                r_op,
-                imm,
-            },
-        },
-    };
-    let word = instruction.encode();
-    state.vm.write_word(addr, word);
-}
 
 fn main() -> io::Result<()> {
     // VM execution control.
@@ -65,30 +27,6 @@ fn main() -> io::Result<()> {
         breakpoints: HashSet::new(),
     };
 
-    // Debug.
-
-    // r1 = array pointer
-    write_i_type(&mut state, 0x00, is::op::ADDI, 1, 0, 0x30);
-    // r2 = accumulator = 0
-    write_r_type(&mut state, 0x04, is::op::ADD, 2, 0, 0);
-    // r3 = length of array in first byte
-    write_i_type(&mut state, 0x08, is::op::LDBU, 3, 1, 0x00);
-    // loop: read byte
-    // jump to end if length is 0
-    write_i_type(&mut state, 0x0C, is::op::BEQ, 0, 3, 6);
-    // move array pointer
-    write_i_type(&mut state, 0x10, is::op::ADDI, 1, 1, 0x01);
-    // load value at array pointer in r4
-    write_i_type(&mut state, 0x14, is::op::LDB, 4, 1, 0x00);
-    // add to accumulator
-    write_r_type(&mut state, 0x18, is::op::ADD, 2, 2, 4);
-    // subtract 1 from length
-    write_i_type(&mut state, 0x1C, is::op::SUBI, 3, 3, 0x01);
-    // jump to top of loop
-    write_i_type(&mut state, 0x20, is::op::JMP, 0, 0, -5i16 as u16);
-    // loop infinitely
-    write_i_type(&mut state, 0x24, is::op::JMP, 0, 0, 0);
-
     state.print()?;
 
     'main: loop {
@@ -97,7 +35,7 @@ fn main() -> io::Result<()> {
         if state.running {
             // Advance some number of cycles.
             for _ in 0..CYCLES_PER_TICK {
-                state.vm.execute_and_advance();
+                let _ = state.vm.execute_and_advance();
                 if state.breakpoints.contains(&state.vm.program_counter()) {
                     state.running = false;
                     any_events = true;
@@ -222,7 +160,7 @@ fn main() -> io::Result<()> {
             }
             if key_code.is_char('s') {
                 let do_jump = state.is_pc_visible();
-                state.vm.execute_and_advance();
+                let _ = state.vm.execute_and_advance();
                 if do_jump {
                     state.show_pc();
                 }
