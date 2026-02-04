@@ -147,7 +147,7 @@ impl State {
         }
 
         let pc = self.vm.program_counter();
-        let registers = self.vm.read_registers();
+        let registers = self.vm.registers();
 
         // Program counter.
         self.ui

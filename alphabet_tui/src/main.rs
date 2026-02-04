@@ -136,7 +136,7 @@ fn main() -> io::Result<()> {
                     }
                     match state.window.cursor {
                         Cursor::Register(r) => {
-                            state.vm.write_register(r as usize, value);
+                            state.vm.set_register(r as usize, value);
                         }
                         Cursor::Memory { word, byte } => {
                             let addr = state.window.mem_start + word as u32 * 4 + byte as u32;
