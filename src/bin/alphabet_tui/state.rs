@@ -1,6 +1,6 @@
 use std::{collections::HashSet, io};
 
-use alphabet::{is, vm};
+use alphabet::vm;
 use crossterm::style;
 
 use crate::{PAGE_SIZE, ui};
@@ -39,7 +39,7 @@ pub struct State {
 impl State {
     pub fn seek(&mut self, mem_start: u32) {
         let block_index = mem_start >> 16;
-        let block = self.vm.get_block(block_index as u16);
+        let block = self.vm.block(block_index as u16);
         let is_io = matches!(block, vm::Block::Io(_));
         let cutoff = if is_io { 16 } else { 7 };
         self.window.is_io_block = is_io;
@@ -147,7 +147,7 @@ impl State {
         }
 
         let pc = self.vm.program_counter();
-        let registers = self.vm.read_registers();
+        let registers = self.vm.registers();
 
         // Program counter.
         self.ui
@@ -162,7 +162,7 @@ impl State {
         // Register values.
         self.ui
             .write_styled(7, 2, "Registers", ui::WriteMode::Bold)?;
-        for (i, register) in registers.into_iter().enumerate().skip(1) {
+        for (i, register) in registers.clone().into_iter().enumerate().skip(1) {
             let i = i as u16;
             let highlight = if let Cursor::Register(r) = self.window.cursor {
                 r == i
@@ -223,8 +223,11 @@ impl State {
         } else {
             self.ui.write(7, 37, &format!("{:04X}", offset))?;
         }
-        let block = self.vm.get_block(block_index as u16);
+        let block = self.vm.block(block_index as u16);
         match block {
+            vm::Block::Empty => {
+                self.ui.write(7, 37, "Empty")?;
+            }
             vm::Block::Io(_) => {
                 self.ui.write(7, 37, "I/O mapped")?;
             }
@@ -233,8 +236,7 @@ impl State {
                 self.ui
                     .write(7, 42, &format!("{:04X}", offset + (PAGE_SIZE - 1)))?;
 
-                let mem = mem.read_all();
-                let mem = &mem[offset as usize..(offset + PAGE_SIZE) as usize];
+                let mem = &mem.clone()[offset as usize..(offset + PAGE_SIZE) as usize];
                 for (word_offset, bytes) in mem.chunks(4).enumerate() {
                     let curr = (block_index << 14) + (offset >> 2) + word_offset as u32;
                     let is_pc = pc == curr && !self.running;
@@ -280,14 +282,15 @@ impl State {
                         }
                     }
 
+                    // TODO
                     // Print representation of instruction.
-                    let bytes = <[u8; 4]>::try_from(bytes).unwrap();
-                    let word = u32::from_be_bytes(bytes);
-                    if let Some(instruction) = is::Instruction::decode(word).as_string() {
-                        if instruction != "noop" {
-                            self.ui.write(9 + word_offset as u16, 36, &instruction)?;
-                        }
-                    }
+                    // let bytes = <[u8; 4]>::try_from(bytes).unwrap();
+                    // let word = u32::from_be_bytes(bytes);
+                    // if let Ok(instruction) = is::Instruction::decode(word).and_then(|instruction| instruction) {
+                    //     if instruction != "noop" {
+                    //         self.ui.write(9 + word_offset as u16, 36, &instruction)?;
+                    //     }
+                    // }
                 }
             }
         }
