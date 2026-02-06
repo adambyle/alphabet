@@ -104,8 +104,16 @@ impl ImageEntry {
     }
 }
 
+impl<'a> From<ImageEntryRef<'a>> for ImageEntry {
+    fn from(value: ImageEntryRef<'a>) -> Self {
+        Self {
+            address: value.address,
+            data: value.data.into_owned(),
+        }
+    }
+}
+
 /// A reference to data in an image entry.
-#[derive(Clone)]
 pub struct ImageEntryRef<'a> {
     address: u32,
     data: Cow<'a, [u8]>,
@@ -123,7 +131,7 @@ impl<'a> ImageEntryRef<'a> {
     }
 
     /// Write the entry according to the [`Image`] format.
-    pub fn write_to(&self, writer: &mut impl Write) -> Result<(), io::Error> {
+    pub fn write_to(&self, mut writer: impl Write) -> io::Result<()> {
         // It is enforced by the API that all entries are valid, meaning:
         // - No entry goes beyond the last address.
         // - All entries are at least 1 in length.
@@ -172,9 +180,9 @@ pub enum ImageEntries<'a> {
 
 impl ImageEntries<'_> {
     /// Write the image entries according to the [`Image`] format.
-    pub fn write_to(&mut self, writer: &mut impl Write) -> Result<(), io::Error> {
+    pub fn write_to(&mut self, mut writer: impl Write) -> io::Result<()> {
         for entry in self {
-            entry.write_to(writer)?;
+            entry.write_to(&mut writer)?;
         }
         Ok(())
     }
@@ -212,7 +220,7 @@ impl<'a> Iterator for ImageEntries<'a> {
                 // End of memory reached.
                 None
             }
-            Self::Entries(entries) => entries.next().map(ImageEntryRef::from),
+            Self::Entries(entries) => entries.next().map(Into::into),
             Self::Bytes(bytes) => loop {
                 let entry = ImageEntry::from_byte_iter(bytes);
                 match entry {
@@ -258,5 +266,27 @@ impl Image {
     pub fn entries<'a>(&'a self) -> ImageEntries<'a> {
         let entries = self.entries.iter();
         ImageEntries::Entries(Box::new(entries))
+    }
+
+    /// Write data to the image.
+    pub fn write(&mut self) {
+        todo!()
+    }
+
+    /// Clear data from the image.
+    pub fn clear(&mut self) {
+        todo!()
+    }
+
+    /// Write the contents of an image.
+    pub fn write_to(&self, writer: impl Write) -> io::Result<()> {
+        self.entries().write_to(writer)
+    }
+}
+
+impl<'a> FromIterator<ImageEntryRef<'a>> for Image {
+    fn from_iter<T: IntoIterator<Item = ImageEntryRef<'a>>>(iter: T) -> Self {
+        let entries = iter.into_iter().map(|entry| entry.into()).collect();
+        Self { entries }
     }
 }
