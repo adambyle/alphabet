@@ -1,8 +1,14 @@
 //! Interface to Alphabet's virtual machine.
 
-use std::array;
+use std::{
+    array,
+    io::{self, Read, Write},
+};
 
-use crate::is::{ITypePayload, Instruction, InstructionError, Operation, Payload, RTypePayload};
+use crate::{
+    image::{Image, ImageEntries, ImageEntryRef},
+    is::{ITypePayload, Instruction, InstructionError, Operation, Payload, RTypePayload},
+};
 
 /// How many bytes are in each memory block.
 pub const BLOCK_SIZE: usize = 1 << 16;
@@ -730,5 +736,33 @@ impl Vm {
     pub fn run_to_address(&mut self, stop_address: u32) {
         let stop_address = stop_address & MAX_WORD_ADDRESS;
         self.run_while(|vm| vm.program_counter() != stop_address);
+    }
+
+    /// Write the contents of the virtual machine
+    /// memory, according to the [`Image`] format.
+    pub fn write_to(&self, writer: &mut impl Write) -> Result<(), io::Error> {
+        ImageEntries::from(self).write_to(writer)
+    }
+}
+
+impl From<&Image> for Vm {
+    fn from(value: &Image) -> Self {
+        Self::from_iter(value.entries())
+    }
+}
+
+impl<R: Read> From<&mut R> for Vm {
+    fn from(value: &mut R) -> Self {
+        Self::from_iter(ImageEntries::from(value))
+    }
+}
+
+impl<'a> FromIterator<ImageEntryRef<'a>> for Vm {
+    fn from_iter<T: IntoIterator<Item = ImageEntryRef<'a>>>(iter: T) -> Self {
+        let mut vm = Self::new();
+        for entry in iter {
+            vm.write_bytes(entry.address(), entry.data());
+        }
+        vm
     }
 }
