@@ -281,6 +281,16 @@ pub struct InstructionResult {
     pub jumped: bool,
 }
 
+/// The status of whether a queried block
+/// already existed.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum BlockExistence {
+    /// The block already existed.
+    Existed,
+    /// The block was created.
+    Created,
+}
+
 /// Instance of the Alphabet virtual machine.
 pub struct Vm {
     program_counter: u32,
@@ -290,16 +300,6 @@ pub struct Vm {
     // I/O device index caching.
     io_indices: Vec<usize>,
     io_indices_valid: bool,
-}
-
-/// The status of whether a queried block
-/// already existed.
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum BlockExistence {
-    /// The block already existed.
-    Existed,
-    /// The block was created.
-    Created,
 }
 
 impl Vm {
@@ -738,9 +738,14 @@ impl Vm {
         self.run_while(|vm| vm.program_counter() != stop_address);
     }
 
+    /// Get an image of the VM.
+    pub fn image(&self) -> Image {
+        FromIterator::from_iter(ImageEntries::from(self))
+    }
+
     /// Write the contents of the virtual machine
     /// memory, according to the [`Image`] format.
-    pub fn write_to(&self, writer: &mut impl Write) -> Result<(), io::Error> {
+    pub fn write_image_to(&self, writer: impl Write) -> io::Result<()> {
         ImageEntries::from(self).write_to(writer)
     }
 }
@@ -751,8 +756,8 @@ impl From<&Image> for Vm {
     }
 }
 
-impl<R: Read> From<&mut R> for Vm {
-    fn from(value: &mut R) -> Self {
+impl<R: Read> From<R> for Vm {
+    fn from(value: R) -> Self {
         Self::from_iter(ImageEntries::from(value))
     }
 }
