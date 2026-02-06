@@ -147,23 +147,20 @@ to save and load configurations with their input devices, but images are the
 most primitive means of representing VM state.
 
 Images may be represented as files with the `.abc` extension. All values
-in the image are big-endian. The layout of an image is a sequence of zero or more
-**entries**. Each entry has the following layout:
+in the image are big-endian. An image is essentially a sequence of memory writes,
+composed from a number of **image entries**. Each entry has the following fields:
 
-- A 16-bit block index.
-- A 16-bit start byte offset.
-- A 16-bit end byte offset (inclusive).
-- The data in the provided block, with the provided length, at the provided offset.
+- A 32-bit start address.
+- A 32-bit end address (inclusive).
+- The appropriate number of bytes.
 
-There are a few things to note about the image layout if you are trying to build
-an image manually or are targeting the Alphabet VM for compilation.
+There are a few rules related to the interpretation of invalid entries:
 
-- If an entry is repeated for a block index, the last entry will overwrite
-all of the ones before it. In other words, you cannot construct multiple regions
-of memory within a block by having multiple entries for that block. This is
-because all the memory in the block outside the provided region will be zeroed.
-- If the offset plus the data length exceeds the size of a block (2^16), the
-data that would be written past the end of the block is ignored.
+- If the end address is before the start address, nothing will be written
+(data length 0).
+- Later entries may overwrite earlier entries.
+- If the data is cut short by the end of the file, everything
+provided is still written.
 
 If you're loading an image that was exported from the VM, you don't need to
 think about these issues.

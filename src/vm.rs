@@ -1,8 +1,14 @@
 //! Interface to Alphabet's virtual machine.
 
-use std::{array, io::Read};
+use std::{
+    array,
+    io::{self, Read, Write},
+};
 
-use crate::is::{ITypePayload, Instruction, InstructionError, Operation, Payload, RTypePayload};
+use crate::{
+    image::{Image, ImageEntries, ImageEntryRef},
+    is::{ITypePayload, Instruction, InstructionError, Operation, Payload, RTypePayload},
+};
 
 /// How many bytes are in each memory block.
 pub const BLOCK_SIZE: usize = 1 << 16;
@@ -20,6 +26,13 @@ pub const MAX_WORD_ADDRESS: u32 = (1 << 30) - 1;
 
 /// Byte contents of a memory block.
 pub type BlockBytes = [u8; BLOCK_SIZE];
+
+fn write_memory_bytes(block_bytes: &mut BlockBytes, new_bytes: &[u8], offset: u16) {
+    let offset = offset as usize;
+    let end = offset + new_bytes.len();
+    let target = &mut block_bytes[offset..end];
+    target.copy_from_slice(new_bytes);
+}
 
 /// A minimal virtual I/O device controller.
 ///
@@ -221,6 +234,44 @@ impl Block {
                 controller.write_byte(offset + 3, bytes[3]);
             }
         };
+    }
+
+    /// Write an arbitrary number of bytes into the block.
+    ///
+    /// Returns the bytes that were unwritten, because they could not fit.
+    pub fn write_bytes<'a>(&mut self, offset: u16, bytes: &'a [u8]) -> &'a [u8] {
+        if bytes.is_empty() {
+            return bytes;
+        }
+
+        // Bytes must be cutoff if they cannot fit.
+        let end = BLOCK_SIZE - offset as usize;
+        let bytes_left = &bytes[end..];
+        let new_bytes = &bytes[..end];
+
+        match self {
+            Self::Empty => {
+                let non_zero = new_bytes.iter().any(|&b| b != 0);
+                if !non_zero {
+                    return bytes_left;
+                }
+                let mut block_bytes = [0; BLOCK_SIZE];
+                write_memory_bytes(&mut block_bytes, new_bytes, offset);
+                *self = Block::with_data(block_bytes);
+            }
+            Self::Memory(memory) => {
+                write_memory_bytes(memory, new_bytes, offset);
+            }
+            Self::Io(controller) => {
+                let mut offset = offset;
+                for &byte in new_bytes {
+                    controller.write_byte(offset, byte);
+                    offset += 1;
+                }
+            }
+        }
+
+        bytes_left
     }
 }
 
@@ -479,6 +530,23 @@ impl Vm {
         true
     }
 
+    /// Write an arbitrary number of bytes to memory, starting
+    /// at the specified address. The unwritten bytes are returned,
+    /// as writing does not wrap around if the last address is reached.
+    pub fn write_bytes<'a>(&mut self, address: u32, bytes: &'a [u8]) -> &'a [u8] {
+        let mut bytes = bytes;
+        let mut block_index = (address >> 16) as u16;
+        let mut offset = (address & 0xFFFF) as u16;
+        loop {
+            bytes = self.blocks[block_index as usize].write_bytes(offset, bytes);
+            if bytes.is_empty() || block_index == u16::MAX {
+                return bytes;
+            }
+            block_index += 1;
+            offset = 0;
+        }
+    }
+
     const SHIFT_MASK: u32 = 0x1F;
 
     fn exec_r_type(&mut self, operation: Operation, payload: &RTypePayload) -> InstructionResult {
@@ -670,123 +738,31 @@ impl Vm {
         self.run_while(|vm| vm.program_counter() != stop_address);
     }
 
-    /// Create a virtual machine with state initialized
-    /// from an image.
-    pub fn from_image(image: Image) -> Self {
+    /// Write the contents of the virtual machine
+    /// memory, according to the [`Image`] format.
+    pub fn write_to(&self, writer: &mut impl Write) -> Result<(), io::Error> {
+        ImageEntries::from(self).write_to(writer)
+    }
+}
+
+impl From<&Image> for Vm {
+    fn from(value: &Image) -> Self {
+        Self::from_iter(value.entries())
+    }
+}
+
+impl<R: Read> From<&mut R> for Vm {
+    fn from(value: &mut R) -> Self {
+        Self::from_iter(ImageEntries::from(value))
+    }
+}
+
+impl<'a> FromIterator<ImageEntryRef<'a>> for Vm {
+    fn from_iter<T: IntoIterator<Item = ImageEntryRef<'a>>>(iter: T) -> Self {
         let mut vm = Self::new();
-        for entry in image.entries {
-            // Ignore invalid entries.
-            if entry.start_offset > entry.end_offset {
-                continue;
-            }
-            let mut data = [0; BLOCK_SIZE];
-            let length = (entry.end_offset - entry.start_offset + 1) as usize;
-            let offset = entry.start_offset as usize;
-            for i in 0..length {
-                data[i + offset] = entry.data[i];
-            }
-            let block = Block::with_data(data);
-            vm.blocks[entry.block_index as usize] = block;
+        for entry in iter {
+            vm.write_bytes(entry.address(), entry.data());
         }
         vm
-    }
-
-    /// Generate an image, a snapshot of the VM's
-    /// state.
-    pub fn image(&self) -> Image {
-        let mut image = Image {
-            entries: Vec::new(),
-        };
-        for (index, block) in self.blocks.iter().enumerate() {
-            let Block::Memory(mem) = block else {
-                continue;
-            };
-            let start_offset = mem.iter().position(|&b| b != 0);
-            let Some(start_offset) = start_offset else {
-                continue;
-            };
-
-            // Unwrap: guaranteed to be at least offset.
-            let end_offset = BLOCK_SIZE - 1 - mem.iter().rev().position(|&b| b != 0).unwrap();
-
-            let data = mem[start_offset..=end_offset].to_vec();
-            let image_entry = ImageEntry {
-                block_index: index as u16,
-                start_offset: start_offset as u16,
-                end_offset: end_offset as u16,
-                data,
-            };
-            image.entries.push(image_entry);
-        }
-        image
-    }
-}
-
-/// The contents of a block of
-/// memory in an image.
-pub struct ImageEntry {
-    pub block_index: u16,
-    pub start_offset: u16,
-    pub end_offset: u16,
-    pub data: Vec<u8>,
-}
-
-/// A representation of VM state.
-pub struct Image {
-    pub entries: Vec<ImageEntry>,
-}
-
-macro_rules! nextbyte {
-    ($bytes: expr, $byte:ident, $image:expr) => {
-        let Some(Ok($byte)) = $bytes.next() else {
-            return $image;
-        };
-    };
-}
-
-impl<R: Read> From<R> for Image {
-    fn from(reader: R) -> Self {
-        let mut image = Image {
-            entries: Vec::new(),
-        };
-        let mut bytes = reader.bytes();
-        loop {
-            // Extract block index bytes.
-            nextbyte!(bytes, bi_u, image);
-            nextbyte!(bytes, bi_l, image);
-
-            // Extract start offset bytes.
-            nextbyte!(bytes, so_u, image);
-            nextbyte!(bytes, so_l, image);
-
-            // Extract end offset bytes.
-            nextbyte!(bytes, eo_u, image);
-            nextbyte!(bytes, eo_l, image);
-
-            let block_index = u16::from_be_bytes([bi_u, bi_l]);
-            let start_offset = u16::from_be_bytes([so_u, so_l]);
-            let end_offset = u16::from_be_bytes([eo_u, eo_l]);
-
-            // Bad offset values are considered to be length 0.
-            if start_offset > end_offset {
-                continue;
-            }
-
-            let length = (end_offset - start_offset + 1) as usize;
-            let mut data = Vec::with_capacity(length);
-            for _ in 0..length {
-                let Some(Ok(byte)) = bytes.next() else {
-                    break;
-                };
-                data.push(byte);
-            }
-            let image_entry = ImageEntry {
-                block_index,
-                start_offset,
-                end_offset,
-                data,
-            };
-            image.entries.push(image_entry);
-        }
     }
 }
