@@ -262,20 +262,56 @@ pub struct Image {
 }
 
 impl Image {
+    /// Create an empty image.
+    pub fn new() -> Self {
+        Self {
+            entries: Vec::new(),
+        }
+    }
+
     /// Iterate the image entries.
     pub fn entries<'a>(&'a self) -> ImageEntries<'a> {
         let entries = self.entries.iter();
         ImageEntries::Entries(Box::new(entries))
     }
 
-    /// Write data to the image.
-    pub fn write(&mut self) {
-        todo!()
+    /// Add an entry to the image.
+    ///
+    /// This method does not automatically
+    /// handle overlapping entries.
+    pub fn add(&mut self, entry: ImageEntry) {
+        self.entries.push(entry);
     }
 
     /// Clear data from the image.
-    pub fn clear(&mut self) {
-        todo!()
+    pub fn clear(&mut self, start_address: u32, end_address: u32) {
+        self.entries.retain_mut(|entry| {
+            // Determine whether entry is in removal bounds.
+            let entry_start = entry.address;
+            let data_length = entry.data.len() as u32;
+            let entry_end = entry_start + (data_length - 1);
+            if entry_start > end_address || entry_end < start_address {
+                return true;
+            }
+            // If entry is totally included, remove completely.
+            if start_address <= entry_start && end_address >= entry_end {
+                return false;
+            }
+            // Otherwise modify entry to remove relevant slice.
+            let remove_start = if start_address < entry_start {
+                0
+            } else {
+                (start_address - entry_start) as usize
+            };
+            let remove_end = if end_address > entry_end {
+                (data_length - 1) as usize
+            } else {
+                (end_address - entry_start) as usize
+            };
+            entry.data.drain(remove_start..remove_end);
+            entry.address += remove_start as u32;
+            true
+        });
     }
 
     /// Write the contents of an image.
