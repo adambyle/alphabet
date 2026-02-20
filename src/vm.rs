@@ -1,9 +1,6 @@
 //! Interface to Alphabet's virtual machine.
 
-use std::{
-    array,
-    io::{self, Read, Write},
-};
+use std::io::{self, Read, Write};
 
 use crate::{
     image::{Image, ImageEntries, ImageEntryRef},
@@ -245,7 +242,7 @@ impl Block {
         }
 
         // Bytes must be cutoff if they cannot fit.
-        let end = BLOCK_SIZE - offset as usize;
+        let end = usize::min(BLOCK_SIZE - offset as usize, bytes.len());
         let bytes_left = &bytes[end..];
         let new_bytes = &bytes[..end];
 
@@ -295,7 +292,7 @@ pub enum BlockExistence {
 pub struct Vm {
     program_counter: u32,
     registers: [u32; REGISTER_COUNT],
-    blocks: [Block; BLOCK_COUNT],
+    blocks: Box<[Block; BLOCK_COUNT]>,
 
     // I/O device index caching.
     io_indices: Vec<usize>,
@@ -305,10 +302,16 @@ pub struct Vm {
 impl Vm {
     /// Create a new virtual machine.
     pub fn new() -> Self {
+        let blocks = std::iter::repeat_with(|| Block::Empty)
+            .take(BLOCK_COUNT)
+            .collect::<Vec<_>>()
+            .try_into()
+            .map_err(|_| ())
+            .expect("failed to initialize blocks");
         Self {
             program_counter: 0,
             registers: [0; REGISTER_COUNT],
-            blocks: array::from_fn(|_| Block::Empty),
+            blocks,
             io_indices: Vec::with_capacity(BLOCK_COUNT),
             io_indices_valid: true,
         }
@@ -533,8 +536,7 @@ impl Vm {
     /// Write an arbitrary number of bytes to memory, starting
     /// at the specified address. The unwritten bytes are returned,
     /// as writing does not wrap around if the last address is reached.
-    pub fn write_bytes<'a>(&mut self, address: u32, bytes: &'a [u8]) -> &'a [u8] {
-        let mut bytes = bytes;
+    pub fn write_bytes<'a>(&mut self, address: u32, mut bytes: &'a [u8]) -> &'a [u8] {
         let mut block_index = (address >> 16) as u16;
         let mut offset = (address & 0xFFFF) as u16;
         loop {
@@ -686,7 +688,7 @@ impl Vm {
         InstructionResult { jumped }
     }
 
-    /// Write a word of data to virtual memory.
+    /// Execute an instruction on the VM.
     pub fn execute(&mut self, instruction: &Instruction) -> InstructionResult {
         let operation = instruction.operation();
         let payload = instruction.payload();
@@ -733,7 +735,7 @@ impl Vm {
 
     /// Run until the program counter is at a certain word address.
     /// The instruction at that address is not run.
-    pub fn run_to_address(&mut self, stop_address: u32) {
+    pub fn run_to_pc(&mut self, stop_address: u32) {
         let stop_address = stop_address & MAX_WORD_ADDRESS;
         self.run_while(|vm| vm.program_counter() != stop_address);
     }

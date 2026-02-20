@@ -290,7 +290,7 @@ impl Operation {
         match self.opcode() {
             Self::NOOP_CODE => Encoding::Noop,
             0x01..=0x1F => Encoding::RType,
-            0x20..=0x2F => Encoding::IType,
+            0x20..=0x3F => Encoding::IType,
             _ => unreachable!(),
         }
     }
@@ -324,11 +324,11 @@ impl Display for RegisterError {
 impl Error for RegisterError {}
 
 /// There is no payload for a no-op instruction.
-#[derive(PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct NoopPayload;
 
 /// R-type payload has 3 register fields.
-#[derive(PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct RTypePayload {
     register_r: usize,
     register_a: usize,
@@ -405,7 +405,7 @@ impl RTypePayload {
 
 /// I-type payload has 2 register fields and
 /// an immediate value field.
-#[derive(PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct ITypePayload {
     register_r: usize,
     register_a: usize,
@@ -478,7 +478,7 @@ impl ITypePayload {
 }
 
 /// Instruction payload (fields and data).
-#[derive(PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum Payload {
     /// Payload for the no-op instruction.
     Noop(NoopPayload),
@@ -555,6 +555,7 @@ impl Display for InstructionError {
 impl Error for InstructionError {}
 
 /// A machine instruction.
+#[derive(Debug)]
 pub struct Instruction {
     operation: Operation,
     payload: Payload,
@@ -607,5 +608,214 @@ impl Instruction {
     /// Encode the instruction into its binary representation.
     pub const fn encode(&self) -> u32 {
         ((self.operation.opcode() as u32) << Self::OPCODE_OFFSET) | self.payload.encode()
+    }
+}
+
+/// Preconfigured instructions.
+pub mod inst {
+    use super::{ITypePayload, Instruction, NoopPayload, Operation, Payload, RTypePayload};
+
+    /// A noop instruction.
+    pub fn noop() -> Instruction {
+        Instruction {
+            operation: Operation::NOOP,
+            payload: Payload::Noop(NoopPayload),
+        }
+    }
+
+    fn r_type(op: Operation, r_r: usize, r_a: usize, r_b: usize) -> Instruction {
+        let payload = RTypePayload::new(r_r, r_a, r_b).expect("invalid register indices");
+        Instruction {
+            operation: op,
+            payload: Payload::RType(payload),
+        }
+    }
+
+    fn i_type(op: Operation, r_r: usize, r_a: usize, imm: u16) -> Instruction {
+        let payload = ITypePayload::new(r_r, r_a, imm).expect("invalid register indices");
+        Instruction {
+            operation: op,
+            payload: Payload::IType(payload),
+        }
+    }
+
+    /// An add instruction.
+    pub fn add(register_r: usize, register_a: usize, register_b: usize) -> Instruction {
+        r_type(Operation::ADD, register_r, register_a, register_b)
+    }
+
+    /// A sub instruction.
+    pub fn sub(register_r: usize, register_a: usize, register_b: usize) -> Instruction {
+        r_type(Operation::SUB, register_r, register_a, register_b)
+    }
+
+    /// A shl instruction.
+    pub fn shl(register_r: usize, register_a: usize, register_b: usize) -> Instruction {
+        r_type(Operation::SHL, register_r, register_a, register_b)
+    }
+
+    /// A shr instruction.
+    pub fn shr(register_r: usize, register_a: usize, register_b: usize) -> Instruction {
+        r_type(Operation::SHR, register_r, register_a, register_b)
+    }
+
+    /// A sar instruction.
+    pub fn sar(register_r: usize, register_a: usize, register_b: usize) -> Instruction {
+        r_type(Operation::SAR, register_r, register_a, register_b)
+    }
+
+    /// An and instruction.
+    pub fn and(register_r: usize, register_a: usize, register_b: usize) -> Instruction {
+        r_type(Operation::AND, register_r, register_a, register_b)
+    }
+
+    /// An or instruction.
+    pub fn or(register_r: usize, register_a: usize, register_b: usize) -> Instruction {
+        r_type(Operation::OR, register_r, register_a, register_b)
+    }
+
+    /// A xor instruction.
+    pub fn xor(register_r: usize, register_a: usize, register_b: usize) -> Instruction {
+        r_type(Operation::XOR, register_r, register_a, register_b)
+    }
+
+    /// A slt instruction.
+    pub fn slt(register_r: usize, register_a: usize, register_b: usize) -> Instruction {
+        r_type(Operation::SLT, register_r, register_a, register_b)
+    }
+
+    /// A sltu instruction.
+    pub fn sltu(register_r: usize, register_a: usize, register_b: usize) -> Instruction {
+        r_type(Operation::SLTU, register_r, register_a, register_b)
+    }
+
+    /// An addi instruction.
+    pub fn addi(register_r: usize, register_a: usize, immediate_value: u16) -> Instruction {
+        i_type(Operation::ADDI, register_r, register_a, immediate_value)
+    }
+
+    /// A subi instruction.
+    pub fn subi(register_r: usize, register_a: usize, immediate_value: u16) -> Instruction {
+        i_type(Operation::SUBI, register_r, register_a, immediate_value)
+    }
+
+    /// A shli instruction.
+    pub fn shli(register_r: usize, register_a: usize, immediate_value: u16) -> Instruction {
+        i_type(Operation::SHLI, register_r, register_a, immediate_value)
+    }
+
+    /// A shri instruction.
+    pub fn shri(register_r: usize, register_a: usize, immediate_value: u16) -> Instruction {
+        i_type(Operation::SHRI, register_r, register_a, immediate_value)
+    }
+
+    /// A sari instruction.
+    pub fn sari(register_r: usize, register_a: usize, immediate_value: u16) -> Instruction {
+        i_type(Operation::SARI, register_r, register_a, immediate_value)
+    }
+
+    /// An andi instruction.
+    pub fn andi(register_r: usize, register_a: usize, immediate_value: u16) -> Instruction {
+        i_type(Operation::ANDI, register_r, register_a, immediate_value)
+    }
+
+    /// An andui instruction.
+    pub fn andui(register_r: usize, register_a: usize, immediate_value: u16) -> Instruction {
+        i_type(Operation::ANDUI, register_r, register_a, immediate_value)
+    }
+
+    /// An ori instruction.
+    pub fn ori(register_r: usize, register_a: usize, immediate_value: u16) -> Instruction {
+        i_type(Operation::ORI, register_r, register_a, immediate_value)
+    }
+
+    /// An orui instruction.
+    pub fn oriu(register_r: usize, register_a: usize, immediate_value: u16) -> Instruction {
+        i_type(Operation::ORUI, register_r, register_a, immediate_value)
+    }
+
+    /// A xori instruction.
+    pub fn xori(register_r: usize, register_a: usize, immediate_value: u16) -> Instruction {
+        i_type(Operation::XORI, register_r, register_a, immediate_value)
+    }
+
+    /// A xorui instruction.
+    pub fn xorui(register_r: usize, register_a: usize, immediate_value: u16) -> Instruction {
+        i_type(Operation::XORUI, register_r, register_a, immediate_value)
+    }
+
+    /// A slti instruction.
+    pub fn slti(register_r: usize, register_a: usize, immediate_value: u16) -> Instruction {
+        i_type(Operation::SLTI, register_r, register_a, immediate_value)
+    }
+
+    /// A sltui instruction.
+    pub fn sltui(register_r: usize, register_a: usize, immediate_value: i16) -> Instruction {
+        i_type(
+            Operation::SLTUI,
+            register_r,
+            register_a,
+            immediate_value as u16,
+        )
+    }
+
+    /// A ldw instruction.
+    pub fn ldw(register_r: usize, register_a: usize, offset: i16) -> Instruction {
+        i_type(Operation::LDW, register_r, register_a, offset as u16)
+    }
+
+    /// A ldhw instruction.
+    pub fn ldhw(register_r: usize, register_a: usize, offset: i16) -> Instruction {
+        i_type(Operation::LDHW, register_r, register_a, offset as u16)
+    }
+
+    /// A ldhwu instruction.
+    pub fn ldhwu(register_r: usize, register_a: usize, offset: i16) -> Instruction {
+        i_type(Operation::LDHWU, register_r, register_a, offset as u16)
+    }
+
+    /// A ldb instruction.
+    pub fn ldb(register_r: usize, register_a: usize, offset: i16) -> Instruction {
+        i_type(Operation::LDB, register_r, register_a, offset as u16)
+    }
+
+    /// A ldbu instruction.
+    pub fn ldbu(register_r: usize, register_a: usize, offset: i16) -> Instruction {
+        i_type(Operation::LDBU, register_r, register_a, offset as u16)
+    }
+
+    /// A stw instruction.
+    pub fn stw(register_s: usize, register_a: usize, offset: i16) -> Instruction {
+        i_type(Operation::STW, register_s, register_a, offset as u16)
+    }
+
+    /// A sthw instruction.
+    pub fn sthw(register_s: usize, register_a: usize, offset: i16) -> Instruction {
+        i_type(Operation::STHW, register_s, register_a, offset as u16)
+    }
+
+    /// A stb instruction.
+    pub fn stb(register_s: usize, register_a: usize, offset: i16) -> Instruction {
+        i_type(Operation::STB, register_s, register_a, offset as u16)
+    }
+
+    /// A jmp instruction.
+    pub fn jmp(register_r: usize, offset: i16) -> Instruction {
+        i_type(Operation::JMP, register_r, 0, offset as u16)
+    }
+
+    /// A jmpr instruction.
+    pub fn jmpr(register_r: usize, register_a: usize, offset: i16) -> Instruction {
+        i_type(Operation::JMPR, register_r, register_a, offset as u16)
+    }
+
+    /// A beq instruction.
+    pub fn beq(register_a: usize, register_b: usize, offset: i16) -> Instruction {
+        i_type(Operation::BEQ, register_a, register_b, offset as u16)
+    }
+
+    /// A bne instruction.
+    pub fn bne(register_a: usize, register_b: usize, offset: i16) -> Instruction {
+        i_type(Operation::BNE, register_a, register_b, offset as u16)
     }
 }
