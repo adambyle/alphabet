@@ -14,7 +14,217 @@ use std::{
     io::{self, Read, Write},
 };
 
-use crate::vm::{Block, Vm};
+use crate::{
+    is::Instruction,
+    vm::{Block, Vm},
+};
+
+/// An issue with creating an image
+/// from a builder.
+#[derive(Debug)]
+pub enum ImageBuildError {
+    Overflow(u32, usize),
+}
+
+impl Display for ImageBuildError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Overflow(cursor, len) => write!(
+                f,
+                "write at location {cursor:80X} of length {len} overflows"
+            ),
+        }
+    }
+}
+
+impl Error for ImageBuildError {}
+
+enum ImageWritePayload {
+    Byte(u8),
+    HalfWord(u16),
+    Word(u32),
+    Bytes(Vec<u8>),
+    HalfWords(Vec<u16>),
+    Words(Vec<u32>),
+}
+
+impl ImageWritePayload {
+    fn len(&self) -> usize {
+        match self {
+            Self::Byte(_) => 1,
+            Self::HalfWord(_) => 2,
+            Self::Word(_) => 4,
+            Self::Bytes(bytes) => bytes.len(),
+            Self::HalfWords(half_words) => 2 * half_words.len(),
+            Self::Words(words) => 4 * words.len(),
+        }
+    }
+
+    fn write_to(self, vec: &mut Vec<u8>) {
+        match self {
+            Self::Byte(byte) => vec.push(byte),
+            Self::HalfWord(half_word) => vec.extend(half_word.to_be_bytes()),
+            Self::Word(word) => vec.extend(word.to_be_bytes()),
+            Self::Bytes(bytes) => vec.extend(bytes),
+            Self::HalfWords(half_words) => {
+                let bytes = half_words
+                    .into_iter()
+                    .map(|half_word| half_word.to_be_bytes())
+                    .flatten();
+                vec.extend(bytes);
+            }
+            Self::Words(words) => {
+                let bytes = words.into_iter().map(|word| word.to_be_bytes()).flatten();
+                vec.extend(bytes);
+            }
+        }
+    }
+}
+
+struct ImageWrite {
+    cursor: u32,
+    payload: ImageWritePayload,
+}
+
+/// Helper API for constructing VM images.
+///
+/// This API is useful for compilers and assemblers
+/// to synthesize image data in an efficient way,
+/// and then either store it immediately to an image or
+/// load it to a VM.
+pub struct ImageBuilder {
+    cursor: u32,
+    writes: Vec<ImageWrite>,
+    overflow: Option<(u32, usize)>,
+}
+
+impl ImageBuilder {
+    /// Create a new image that organizes its
+    /// writes into an entry per VM block.
+    pub fn new() -> Self {
+        Self {
+            cursor: 0,
+            writes: Vec::new(),
+            overflow: None,
+        }
+    }
+
+    /// Move the cursor to the specified location.
+    pub fn seek(mut self, cursor: u32) -> Self {
+        self.cursor = cursor;
+        self
+    }
+
+    fn advance_checked(&mut self, len: usize) {
+        let (next_cursor, overflow) = self.cursor.overflowing_add(len as u32);
+        if overflow {
+            self.overflow.get_or_insert((self.cursor, len));
+        }
+        self.cursor = next_cursor;
+    }
+
+    fn write(&mut self, payload: ImageWritePayload) {
+        let len = payload.len();
+        let write = ImageWrite {
+            payload,
+            cursor: self.cursor,
+        };
+        self.writes.push(write);
+        self.advance_checked(len);
+    }
+
+    /// Write a byte of data at the cursor.
+    pub fn write_byte(mut self, byte: u8) -> Self {
+        self.write(ImageWritePayload::Byte(byte));
+        self
+    }
+
+    /// Write a sequence of bytes at the cursor.
+    pub fn write_bytes(mut self, bytes: Vec<u8>) -> Self {
+        self.write(ImageWritePayload::Bytes(bytes));
+        self
+    }
+
+    /// Write an ASCII-encoded string at the cursor.
+    pub fn write_ascii(self, string: String) -> Self {
+        self.write_bytes(string.into_bytes())
+    }
+
+    /// Write a half-word of data at the cursor.
+    pub fn write_half_word(mut self, half_word: u16) -> Self {
+        self.write(ImageWritePayload::HalfWord(half_word));
+        self
+    }
+
+    /// Write a sequence of half-words at the cursor.
+    pub fn write_half_words(mut self, half_words: Vec<u16>) -> Self {
+        self.write(ImageWritePayload::HalfWords(half_words));
+        self
+    }
+
+    /// Write a word of data at the cursor.
+    pub fn write_word(mut self, word: u32) -> Self {
+        self.write(ImageWritePayload::Word(word));
+        self
+    }
+
+    /// Write a sequence of words at the cursor.
+    pub fn write_words(mut self, words: Vec<u32>) -> Self {
+        self.write(ImageWritePayload::Words(words));
+        self
+    }
+
+    /// Write an instruction at the cursor.
+    /// This automatically word-aligns the cursor.
+    pub fn write_instruction(mut self, instruction: &Instruction) -> Self {
+        // Align the cursor. Round up.
+        self.advance_checked(3);
+        self.cursor >>= 2;
+        self.cursor <<= 2;
+
+        self.write_word(instruction.encode())
+    }
+
+    /// Write a sequence of instructions at the cursor.
+    /// This automatically word-aligns the cursor.
+    pub fn write_instructions(mut self, instructions: &[Instruction]) -> Self {
+        // Align the cursor. Round up.
+        self.advance_checked(3);
+        self.cursor >>= 2;
+        self.cursor <<= 2;
+
+        self.write_words(instructions.iter().map(|i| i.encode()).collect())
+    }
+
+    /// Consume the builder, outputting the entries that
+    /// make up the resulting image.
+    pub fn entries(self) -> Result<ImageEntries<'static>, ImageBuildError> {
+        if let Some((cursor, len)) = self.overflow {
+            return Err(ImageBuildError::Overflow(cursor, len));
+        }
+
+        // TODO add optimizations. Right now we just write all raw entries.
+        // TODO error on overlap.
+        let mut entries = Vec::new();
+        for ImageWrite { cursor, payload } in self.writes {
+            let mut data = Vec::new();
+            payload.write_to(&mut data);
+            entries.push(ImageEntry {
+                address: cursor,
+                data,
+            })
+        }
+        Ok(ImageEntries::Entries(Box::new(
+            entries.into_iter().map(Into::into),
+        )))
+    }
+
+    /// Consume the builder, c
+    pub fn build<T: FromIterator<ImageEntryRef<'static>>>(self) -> Result<T, ImageBuildError> {
+        let entries = self.entries()?;
+        Ok(FromIterator::from_iter(entries))
+    }
+}
 
 /// The entry data was invalid.
 #[derive(Debug)]
@@ -172,7 +382,7 @@ pub enum ImageEntries<'a> {
     Vm { vm: &'a Vm, block_index: u16 },
 
     /// The image entries are produced from an Image.
-    Entries(Box<dyn Iterator<Item = &'a ImageEntry> + 'a>),
+    Entries(Box<dyn Iterator<Item = ImageEntryRef<'a>> + 'a>),
 
     /// The image entries are parsed from binary representation.
     Bytes(Box<dyn Iterator<Item = u8> + 'a>),
@@ -262,20 +472,56 @@ pub struct Image {
 }
 
 impl Image {
+    /// Create an empty image.
+    pub fn new() -> Self {
+        Self {
+            entries: Vec::new(),
+        }
+    }
+
     /// Iterate the image entries.
     pub fn entries<'a>(&'a self) -> ImageEntries<'a> {
-        let entries = self.entries.iter();
+        let entries = self.entries.iter().map(Into::into);
         ImageEntries::Entries(Box::new(entries))
     }
 
-    /// Write data to the image.
-    pub fn write(&mut self) {
-        todo!()
+    /// Add an entry to the image.
+    ///
+    /// This method does not automatically
+    /// handle overlapping entries.
+    pub fn add(&mut self, entry: ImageEntry) {
+        self.entries.push(entry);
     }
 
     /// Clear data from the image.
-    pub fn clear(&mut self) {
-        todo!()
+    pub fn clear(&mut self, start_address: u32, end_address: u32) {
+        self.entries.retain_mut(|entry| {
+            // Determine whether entry is in removal bounds.
+            let entry_start = entry.address;
+            let data_length = entry.data.len() as u32;
+            let entry_end = entry_start + (data_length - 1);
+            if entry_start > end_address || entry_end < start_address {
+                return true;
+            }
+            // If entry is totally included, remove completely.
+            if start_address <= entry_start && end_address >= entry_end {
+                return false;
+            }
+            // Otherwise modify entry to remove relevant slice.
+            let remove_start = if start_address < entry_start {
+                0
+            } else {
+                (start_address - entry_start) as usize
+            };
+            let remove_end = if end_address > entry_end {
+                (data_length - 1) as usize
+            } else {
+                (end_address - entry_start) as usize
+            };
+            entry.data.drain(remove_start..remove_end);
+            entry.address += remove_start as u32;
+            true
+        });
     }
 
     /// Write the contents of an image.

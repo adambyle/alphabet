@@ -3,7 +3,7 @@
 
 use std::{error::Error, fmt::Display};
 
-use crate::vm::REGISTER_COUNT;
+use crate::vm;
 
 /// A kind of instruction encoding.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -349,13 +349,13 @@ impl RTypePayload {
         register_a_index: usize,
         register_b_index: usize,
     ) -> Result<Self, RegisterError> {
-        if register_r_index > REGISTER_COUNT {
+        if register_r_index > vm::REGISTER_COUNT {
             return Err(RegisterError(register_r_index));
         }
-        if register_a_index > REGISTER_COUNT {
+        if register_a_index > vm::REGISTER_COUNT {
             return Err(RegisterError(register_a_index));
         }
-        if register_b_index > REGISTER_COUNT {
+        if register_b_index > vm::REGISTER_COUNT {
             return Err(RegisterError(register_b_index));
         }
 
@@ -426,10 +426,10 @@ impl ITypePayload {
         register_a_index: usize,
         immediate_value: u16,
     ) -> Result<Self, RegisterError> {
-        if register_r_index > REGISTER_COUNT {
+        if register_r_index > vm::REGISTER_COUNT {
             return Err(RegisterError(register_r_index));
         }
-        if register_a_index > REGISTER_COUNT {
+        if register_a_index > vm::REGISTER_COUNT {
             return Err(RegisterError(register_a_index));
         }
 
