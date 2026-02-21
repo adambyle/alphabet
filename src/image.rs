@@ -12,6 +12,7 @@ use std::{
     error::Error,
     fmt::Display,
     io::{self, Read, Write},
+    iter,
 };
 
 use crate::{
@@ -95,9 +96,12 @@ impl ImageWritePayload {
     }
 }
 
+const WRITE_MERGE_BUFFER: u32 = 8;
+
 struct ImageWrite {
     cursor: u32,
     payload: ImageWritePayload,
+    merge_padding: Option<usize>,
 }
 
 /// Helper API for constructing VM images.
@@ -140,9 +144,10 @@ impl ImageBuilder {
 
     fn write(&mut self, payload: ImageWritePayload) {
         let len = payload.len();
-        let write = ImageWrite {
+        let mut write = ImageWrite {
             payload,
             cursor: self.cursor,
+            merge_padding: None,
         };
 
         // Determine insertion point (writes maintain order).
@@ -161,7 +166,8 @@ impl ImageBuilder {
         };
 
         // Check for overlaps.
-        if index > 0 {
+        let end = self.cursor + (len as u32 - 1);
+        let end_previous = if index > 0 {
             let previous = &self.writes[index - 1];
             let end_previous = previous.cursor + (previous.payload.len() as u32 - 1);
             if end_previous >= self.cursor {
@@ -171,10 +177,12 @@ impl ImageBuilder {
                 });
                 return;
             }
-        }
-        if index < self.writes.len() - 1 {
+            Some(end_previous)
+        } else {
+            None
+        };
+        let start_next = if index < self.writes.len() - 1 {
             let next = &self.writes[index + 1];
-            let end = self.cursor + (len as u32 - 1);
             if end >= next.cursor {
                 self.error.get_or_insert(ImageBuildError::Overlap {
                     write_1: (next.cursor, next.payload.len()),
@@ -182,11 +190,26 @@ impl ImageBuilder {
                 });
                 return;
             }
-        }
+            Some(next.cursor)
+        } else {
+            None
+        };
 
         // Insert new write.
         // TODO merge writes if possible.
         // (Within 8 bytes justifies merging.)
+        if let Some(end_previous) = end_previous {
+            let diff = self.cursor - end_previous;
+            if diff < WRITE_MERGE_BUFFER {
+                self.writes[index - 1].merge_padding = Some(diff as usize - 1);
+            }
+        }
+        if let Some(start_next) = start_next {
+            let diff = start_next - end;
+            if diff < WRITE_MERGE_BUFFER {
+                write.merge_padding = Some(diff as usize - 1);
+            }
+        }
         self.writes.insert(index, write);
         self.advance_checked(len);
     }
@@ -288,17 +311,25 @@ impl ImageBuilder {
             return Err(err);
         }
 
-        // TODO add optimizations. Right now we just write all raw entries.
-        // TODO error on overlap.
         let mut entries = Vec::new();
-        for ImageWrite { cursor, payload } in self.writes {
-            let mut data = Vec::new();
-            payload.write_to(&mut data);
-            entries.push(ImageEntry {
-                address: cursor,
-                data,
+        let mut active_entry: Option<ImageEntry> = None;
+        for write in self.writes {
+            let mut entry = active_entry.unwrap_or(ImageEntry {
+                address: write.cursor,
+                data: Vec::new(),
             });
+            write.payload.write_to(&mut entry.data);
+            if let Some(merge_padding) = write.merge_padding {
+                // Extend active entry, but do not write it.
+                entry.data.extend(iter::repeat_n(0, merge_padding));
+                active_entry = Some(entry);
+                continue;
+            }
+            // Finish entry.
+            entries.push(entry);
+            active_entry = None;
         }
+        assert!(active_entry.is_none(), "last entry had merge padding");
         Ok(ImageEntries::Entries(Box::new(
             entries.into_iter().map(Into::into),
         )))
