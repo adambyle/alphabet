@@ -23,7 +23,16 @@ use crate::{
 /// from a builder.
 #[derive(Debug)]
 pub enum ImageBuildError {
+    /// A write was attempted that would extend past the end
+    /// address of memory.
     Overflow(u32, usize),
+    /// Two writes overlap.
+    Overlap {
+        /// The first write.
+        write_1: (u32, usize),
+        /// The overlapping write.
+        write_2: (u32, usize),
+    },
 }
 
 impl Display for ImageBuildError {
@@ -32,6 +41,11 @@ impl Display for ImageBuildError {
             Self::Overflow(cursor, len) => write!(
                 f,
                 "write at location {cursor:80X} of length {len} overflows"
+            ),
+            Self::Overlap { write_1, write_2 } => write!(
+                f,
+                "write at location {:#80X} of length {} overlaps with write at location {:#80X} of length {}",
+                write_2.0, write_2.1, write_1.0, write_1.1,
             ),
         }
     }
@@ -95,7 +109,7 @@ struct ImageWrite {
 pub struct ImageBuilder {
     cursor: u32,
     writes: Vec<ImageWrite>,
-    overflow: Option<(u32, usize)>,
+    error: Option<ImageBuildError>,
 }
 
 impl ImageBuilder {
@@ -105,7 +119,7 @@ impl ImageBuilder {
         Self {
             cursor: 0,
             writes: Vec::new(),
-            overflow: None,
+            error: None,
         }
     }
 
@@ -118,7 +132,8 @@ impl ImageBuilder {
     fn advance_checked(&mut self, len: usize) {
         let (next_cursor, overflow) = self.cursor.overflowing_add(len as u32);
         if overflow {
-            self.overflow.get_or_insert((self.cursor, len));
+            self.error
+                .get_or_insert(ImageBuildError::Overflow(self.cursor, len));
         }
         self.cursor = next_cursor;
     }
@@ -129,18 +144,70 @@ impl ImageBuilder {
             payload,
             cursor: self.cursor,
         };
-        self.writes.push(write);
+
+        // Determine insertion point (writes maintain order).
+        let index = self.writes.binary_search_by_key(&self.cursor, |w| w.cursor);
+        let index = match index {
+            Err(index) => index,
+            Ok(index) => {
+                // Write already exists at this offset.
+                let existing = &self.writes[index];
+                self.error.get_or_insert(ImageBuildError::Overlap {
+                    write_1: (existing.cursor, existing.payload.len()),
+                    write_2: (self.cursor, len),
+                });
+                return;
+            }
+        };
+
+        // Check for overlaps.
+        if index > 0 {
+            let previous = &self.writes[index - 1];
+            let end_previous = previous.cursor + (previous.payload.len() as u32 - 1);
+            if end_previous >= self.cursor {
+                self.error.get_or_insert(ImageBuildError::Overlap {
+                    write_1: (previous.cursor, previous.payload.len()),
+                    write_2: (self.cursor, len),
+                });
+                return;
+            }
+        }
+        if index < self.writes.len() - 1 {
+            let next = &self.writes[index + 1];
+            let end = self.cursor + (len as u32 - 1);
+            if end >= next.cursor {
+                self.error.get_or_insert(ImageBuildError::Overlap {
+                    write_1: (next.cursor, next.payload.len()),
+                    write_2: (self.cursor, len),
+                });
+                return;
+            }
+        }
+
+        // Insert new write.
+        // TODO merge writes if possible.
+        // (Within 8 bytes justifies merging.)
+        self.writes.insert(index, write);
         self.advance_checked(len);
     }
 
     /// Write a byte of data at the cursor.
     pub fn write_byte(mut self, byte: u8) -> Self {
+        if self.error.is_some() {
+            return self;
+        }
         self.write(ImageWritePayload::Byte(byte));
         self
     }
 
     /// Write a sequence of bytes at the cursor.
     pub fn write_bytes(mut self, bytes: Vec<u8>) -> Self {
+        if bytes.is_empty() {
+            return self;
+        }
+        if self.error.is_some() {
+            return self;
+        }
         self.write(ImageWritePayload::Bytes(bytes));
         self
     }
@@ -152,24 +219,42 @@ impl ImageBuilder {
 
     /// Write a half-word of data at the cursor.
     pub fn write_half_word(mut self, half_word: u16) -> Self {
+        if self.error.is_some() {
+            return self;
+        }
         self.write(ImageWritePayload::HalfWord(half_word));
         self
     }
 
     /// Write a sequence of half-words at the cursor.
     pub fn write_half_words(mut self, half_words: Vec<u16>) -> Self {
+        if half_words.is_empty() {
+            return self;
+        }
+        if self.error.is_some() {
+            return self;
+        }
         self.write(ImageWritePayload::HalfWords(half_words));
         self
     }
 
     /// Write a word of data at the cursor.
     pub fn write_word(mut self, word: u32) -> Self {
+        if self.error.is_some() {
+            return self;
+        }
         self.write(ImageWritePayload::Word(word));
         self
     }
 
     /// Write a sequence of words at the cursor.
     pub fn write_words(mut self, words: Vec<u32>) -> Self {
+        if words.is_empty() {
+            return self;
+        }
+        if self.error.is_some() {
+            return self;
+        }
         self.write(ImageWritePayload::Words(words));
         self
     }
@@ -199,8 +284,8 @@ impl ImageBuilder {
     /// Consume the builder, outputting the entries that
     /// make up the resulting image.
     pub fn entries(self) -> Result<ImageEntries<'static>, ImageBuildError> {
-        if let Some((cursor, len)) = self.overflow {
-            return Err(ImageBuildError::Overflow(cursor, len));
+        if let Some(err) = self.error {
+            return Err(err);
         }
 
         // TODO add optimizations. Right now we just write all raw entries.
@@ -212,7 +297,7 @@ impl ImageBuilder {
             entries.push(ImageEntry {
                 address: cursor,
                 data,
-            })
+            });
         }
         Ok(ImageEntries::Entries(Box::new(
             entries.into_iter().map(Into::into),
