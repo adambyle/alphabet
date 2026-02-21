@@ -41,7 +41,7 @@ impl Display for ImageBuildError {
         match self {
             Self::Overflow(cursor, len) => write!(
                 f,
-                "write at location {cursor:80X} of length {len} overflows"
+                "write at location {cursor:#80X} of length {len} overflows"
             ),
             Self::Overlap { write_1, write_2 } => write!(
                 f,
@@ -335,7 +335,7 @@ impl ImageBuilder {
         )))
     }
 
-    /// Consume the builder, c
+    /// Consume the builder, building into an image or VM.
     pub fn build<T: FromIterator<ImageEntryRef<'static>>>(self) -> Result<T, ImageBuildError> {
         let entries = self.entries()?;
         Ok(FromIterator::from_iter(entries))

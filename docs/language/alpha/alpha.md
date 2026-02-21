@@ -90,7 +90,7 @@ Alpha supports all of Alphabet's machine instructions and
 has no additional pseudo-instructions. The name and behavior
 of each instruction can be found [here](../../instruction-set.md).
 
-The syntax of an instruction depends on its type, although 
+The syntax of an instruction depends on its type.
 
 ### R-type
 
