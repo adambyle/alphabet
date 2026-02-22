@@ -1,6 +1,10 @@
 //! Interface to Alphabet's virtual machine.
 
-use std::io::{self, Read, Write};
+use std::{
+    collections::BTreeSet,
+    io::{self, Read, Write},
+    iter,
+};
 
 use crate::{
     image::{Image, ImageEntries, ImageEntryRef},
@@ -60,13 +64,13 @@ pub enum Block {
 
 impl Block {
     /// Create a new memory block containing the specified data.
-    pub fn with_data(data: BlockBytes) -> Self {
-        Self::Memory(Box::new(data))
+    pub fn with_data(data: Box<BlockBytes>) -> Self {
+        Self::Memory(data)
     }
 
     /// Create a new zeroed memory block.
     pub fn new_memory() -> Self {
-        Self::with_data([0; BLOCK_SIZE])
+        Self::with_data(Box::new([0; BLOCK_SIZE]))
     }
 
     /// Create a new block mapped to an I/O controller.
@@ -252,7 +256,7 @@ impl Block {
                 if !non_zero {
                     return bytes_left;
                 }
-                let mut block_bytes = [0; BLOCK_SIZE];
+                let mut block_bytes = Box::new([0; BLOCK_SIZE]);
                 write_memory_bytes(&mut block_bytes, new_bytes, offset);
                 *self = Block::with_data(block_bytes);
             }
@@ -272,8 +276,8 @@ impl Block {
     }
 }
 
-/// The result of the VM executing a single instruction.
-pub struct InstructionResult {
+/// The outcome of the VM executing a single instruction.
+pub struct InstructionOutcome {
     // Whether the program counter was overwritten.
     pub jumped: bool,
 }
@@ -288,6 +292,19 @@ pub enum BlockExistence {
     Created,
 }
 
+/// When a mutable reference to a block is taken, the
+/// user of the reference can change the type of the
+/// block through the reference. This status value
+/// tracks which blocks need re-checks.
+enum IoStatus {
+    /// The type of all blocks are known.
+    Known,
+    /// The wrapped indices need to be rechecked.
+    Check(Vec<usize>),
+    /// All indices need to be rechecked.
+    CheckAll,
+}
+
 /// Instance of the Alphabet virtual machine.
 pub struct Vm {
     program_counter: u32,
@@ -295,14 +312,14 @@ pub struct Vm {
     blocks: Box<[Block; BLOCK_COUNT]>,
 
     // I/O device index caching.
-    io_indices: Vec<usize>,
-    io_indices_valid: bool,
+    io_indices: BTreeSet<usize>,
+    io_status: IoStatus,
 }
 
 impl Vm {
     /// Create a new virtual machine.
     pub fn new() -> Self {
-        let blocks = std::iter::repeat_with(|| Block::Empty)
+        let blocks = iter::repeat_with(|| Block::Empty)
             .take(BLOCK_COUNT)
             .collect::<Vec<_>>()
             .try_into()
@@ -312,8 +329,8 @@ impl Vm {
             program_counter: 0,
             registers: [0; REGISTER_COUNT],
             blocks,
-            io_indices: Vec::with_capacity(BLOCK_COUNT),
-            io_indices_valid: true,
+            io_indices: BTreeSet::new(),
+            io_status: IoStatus::Known,
         }
     }
 
@@ -331,6 +348,8 @@ impl Vm {
     pub fn reset(&mut self) {
         self.restart();
         self.blocks.fill_with(|| Block::Empty);
+        self.io_indices.clear();
+        self.io_status = IoStatus::Known;
     }
 
     /// Get the word address of the next
@@ -365,28 +384,22 @@ impl Vm {
         self.registers[index] = word;
     }
 
-    fn refresh_io_index_cache(&mut self) {
-        if self.io_indices_valid {
-            return;
-        }
-        self.io_indices.clear();
-        let io_indices = self
-            .blocks
-            .iter()
-            .enumerate()
-            .filter(|(_, block)| block.is_io())
-            .map(|(i, _)| i);
-        self.io_indices.extend(io_indices);
-        self.io_indices_valid = true;
-    }
-
     /// Get all VM blocks.
     pub fn blocks(&self) -> &[Block; BLOCK_COUNT] {
         &self.blocks
     }
 
     /// Mutably get all VM blocks.
+    ///
+    /// Using this method in combination with [`Vm::tick_all`] is
+    /// unperformant as the VM must recheck all blocks in case any
+    /// were changed to/from I/O-mapped blocks.
     pub fn blocks_mut(&mut self) -> &mut [Block; BLOCK_COUNT] {
+        // Because I/O blocks can be added or removed
+        // through the reference, we need to recheck
+        // for them before ticking.
+        self.io_status = IoStatus::CheckAll;
+
         &mut self.blocks
     }
 
@@ -397,10 +410,18 @@ impl Vm {
 
     /// Get a mutable block of memory with the given index.
     pub fn block_mut(&mut self, block_index: u16) -> &mut Block {
-        // Because this block can be replaced with an I/O
-        // block through the reference, we'll need to check
-        // for that next time we tick all I/O devices.
-        self.io_indices_valid = false;
+        let block_index = block_index as usize;
+
+        // Because an I/O block can be added or removed
+        // through the reference, we need to recheck
+        // for them before ticking.
+        if let IoStatus::Known = self.io_status {
+            self.io_status = IoStatus::Check(vec![block_index]);
+        } else if let IoStatus::Check(ref mut indices) = self.io_status
+            && !indices.contains(&block_index)
+        {
+            indices.push(block_index);
+        }
 
         &mut self.blocks[block_index as usize]
     }
@@ -428,9 +449,9 @@ impl Vm {
         let old_block_is_io = old_block.is_io();
         let block_index = block_index as usize;
         if old_block_is_io && !new_block_is_io {
-            self.io_indices.retain(|&index| index != block_index);
+            self.io_indices.remove(&block_index);
         } else if !old_block_is_io && new_block_is_io {
-            self.io_indices.push(block_index);
+            self.io_indices.insert(block_index);
         }
         old_block
     }
@@ -455,7 +476,36 @@ impl Vm {
 
     /// Notify all I/O controllers they may update their state.
     pub fn tick_all(&mut self) {
-        self.refresh_io_index_cache();
+        // Refresh index cache.
+        if let IoStatus::CheckAll = self.io_status {
+            // If all need to be checked,
+            // tick while updating cache.
+            self.io_indices = self
+                .blocks
+                .iter_mut()
+                .enumerate()
+                .filter_map(|(i, b)| {
+                    b.is_io().then(|| {
+                        b.tick();
+                        i
+                    })
+                })
+                .collect();
+            self.io_status = IoStatus::Known;
+            return;
+        }
+
+        if let IoStatus::Check(ref indices) = self.io_status {
+            for &index in indices {
+                let is_io = self.blocks[index].is_io();
+                if is_io {
+                    self.io_indices.insert(index);
+                } else {
+                    self.io_indices.remove(&index);
+                }
+            }
+            self.io_status = IoStatus::Known;
+        }
         for &block_index in &self.io_indices {
             self.blocks[block_index].tick();
         }
@@ -551,7 +601,7 @@ impl Vm {
 
     const SHIFT_MASK: u32 = 0x1F;
 
-    fn exec_r_type(&mut self, operation: Operation, payload: &RTypePayload) -> InstructionResult {
+    fn exec_r_type(&mut self, operation: Operation, payload: &RTypePayload) -> InstructionOutcome {
         let r_a = self.register(payload.register_a_index());
         let r_b = self.register(payload.register_b_index());
 
@@ -581,10 +631,10 @@ impl Vm {
             _ => panic!("invalid R-type opcode"),
         };
         self.set_register(payload.register_r_index(), result);
-        InstructionResult { jumped: false }
+        InstructionOutcome { jumped: false }
     }
 
-    fn exec_i_type(&mut self, operation: Operation, payload: &ITypePayload) -> InstructionResult {
+    fn exec_i_type(&mut self, operation: Operation, payload: &ITypePayload) -> InstructionOutcome {
         let r_r = self.register(payload.register_r_index());
         let r_a = self.register(payload.register_a_index());
         let imm = payload.immediate_value();
@@ -685,15 +735,15 @@ impl Vm {
         if let Some(result) = result {
             self.set_register(payload.register_r_index(), result);
         }
-        InstructionResult { jumped }
+        InstructionOutcome { jumped }
     }
 
     /// Execute an instruction on the VM.
-    pub fn execute(&mut self, instruction: &Instruction) -> InstructionResult {
+    pub fn execute(&mut self, instruction: &Instruction) -> InstructionOutcome {
         let operation = instruction.operation();
         let payload = instruction.payload();
         match payload {
-            Payload::Noop(_) => InstructionResult { jumped: false },
+            Payload::Noop(_) => InstructionOutcome { jumped: false },
             Payload::RType(payload) => self.exec_r_type(operation, payload),
             Payload::IType(payload) => self.exec_i_type(operation, payload),
         }
@@ -709,7 +759,7 @@ impl Vm {
     /// If the instruction is invalid, the program counter is still advanced.
     pub fn execute_and_advance(
         &mut self,
-    ) -> Result<(Instruction, InstructionResult), InstructionError> {
+    ) -> Result<(Instruction, InstructionOutcome), InstructionError> {
         let instruction = self.read_word(self.program_counter * 4);
         let instruction = match Instruction::decode(instruction) {
             Ok(instruction) => instruction,

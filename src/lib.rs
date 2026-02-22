@@ -1,3 +1,5 @@
+#![warn(missing_docs)]
+
 //! Core Alphabet VM and instruction set implementation.
 //!
 //! This crate provides an API to instantiate a VM instance and manipulate
