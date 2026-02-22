@@ -278,7 +278,7 @@ impl Block {
 
 /// The outcome of the VM executing a single instruction.
 pub struct InstructionOutcome {
-    // Whether the program counter was overwritten.
+    /// Whether the program counter was overwritten.
     pub jumped: bool,
 }
 
@@ -310,6 +310,7 @@ pub struct Vm {
     program_counter: u32,
     registers: [u32; REGISTER_COUNT],
     blocks: Box<[Block; BLOCK_COUNT]>,
+    tick_on_read: bool,
 
     // I/O device index caching.
     io_indices: BTreeSet<usize>,
@@ -329,6 +330,7 @@ impl Vm {
             program_counter: 0,
             registers: [0; REGISTER_COUNT],
             blocks,
+            tick_on_read: true,
             io_indices: BTreeSet::new(),
             io_status: IoStatus::Known,
         }
@@ -472,6 +474,20 @@ impl Vm {
         } else {
             (block, BlockExistence::Existed)
         }
+    }
+
+    /// Whether memory-read instructions automatically
+    /// tick an I/O device when reading memory from
+    /// its block.
+    pub fn tick_on_read(&self) -> bool {
+        self.tick_on_read
+    }
+
+    /// Set whether memory-read instructions automatically
+    /// tick an I/O device when reading memory from its
+    /// block.
+    pub fn set_tick_on_read(&mut self, tick_on_read: bool) {
+        self.tick_on_read = tick_on_read;
     }
 
     /// Notify all I/O controllers they may update their state.
@@ -660,28 +676,48 @@ impl Vm {
             Operation::SLTUI_CODE => Some(if r_a < imm as u32 { 1 } else { 0 }),
             Operation::LDW_CODE => {
                 let addr = r_a.wrapping_add_signed(imm as i16 as i32);
-                let word = self.tick_read_word(addr);
+                let word = if self.tick_on_read {
+                    self.tick_read_word(addr)
+                } else {
+                    self.read_word(addr)
+                };
                 Some(word)
             }
             Operation::LDHW_CODE => {
                 let addr = r_a.wrapping_add_signed(imm as i16 as i32);
-                let word = self.tick_read_half_word(addr) as i16 as i32 as u32;
-                Some(word)
+                let half_word = if self.tick_on_read {
+                    self.tick_read_half_word(addr)
+                } else {
+                    self.read_half_word(addr)
+                } as i16 as i32 as u32;
+                Some(half_word)
             }
             Operation::LDHWU_CODE => {
                 let addr = r_a.wrapping_add_signed(imm as i16 as i32);
-                let word = self.tick_read_half_word(addr) as u32;
-                Some(word)
+                let half_word = if self.tick_on_read {
+                    self.tick_read_half_word(addr)
+                } else {
+                    self.read_half_word(addr)
+                } as u32;
+                Some(half_word)
             }
             Operation::LDB_CODE => {
                 let addr = r_a.wrapping_add_signed(imm as i16 as i32);
-                let word = self.tick_read_byte(addr) as i8 as i32 as u32;
-                Some(word)
+                let byte = if self.tick_on_read {
+                    self.tick_read_byte(addr)
+                } else {
+                    self.read_byte(addr)
+                } as i8 as i32 as u32;
+                Some(byte)
             }
             Operation::LDBU_CODE => {
                 let addr = r_a.wrapping_add_signed(imm as i16 as i32);
-                let word = self.tick_read_byte(addr) as u32;
-                Some(word)
+                let byte = if self.tick_on_read {
+                    self.tick_read_byte(addr)
+                } else {
+                    self.read_byte(addr)
+                } as u32;
+                Some(byte)
             }
             Operation::STW_CODE => {
                 let addr = r_a.wrapping_add_signed(imm as i16 as i32);
