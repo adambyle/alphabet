@@ -31,6 +31,40 @@
 //! entails reading a word of memory from the I/O controller and interpreting it as an
 //! instruction; in other words, the VM does not care whether the instruction comes
 //! from a memory block or an I/O block.
+//!
+//! # Program execution
+//!
+//! Once a program is loaded in memory and the program counter is set at the proper
+//! location (it starts at 0), instructions can be executed sequentially using
+//! [`Vm::execute_and_advance`]. VM hosts should run this method in a loop if they
+//! want fine control over starting/stopping the program.
+//!
+//! Convenience methods exist to run a program with no intermediate control:
+//!
+//! - [`run_while`](Vm::run_while) runs while a condition on the VM is met.
+//! - [`run_until_instruction`](Vm::run_until_instruction) runs until
+//! a condition on an instruction is met.
+//! - [`run_to_pc`](Vm::run_to_pc) runs to a certain word address.
+//! - [`run_until_loop`](Vm::run_until_loop) runs until a `jmp` instruction
+//! with offset 0, the conventional way to denote the end of a program.
+//! - [`run_until_jumped`](Vm::run_until_jumped) runs until an instruction
+//! causes a jump or branch.
+//! - [`run_while_valid`](Vm::run_while_valid) runs while valid instructions
+//! are decoded.
+//!
+//! # Saving and loading programs and data
+//!
+//! The [`image`](crate::image) API allows for moving VM state between media.
+//! Convenience methods and trait implementations exist for saving/loading a VM
+//! to/from a file, or to an in-memory representation. See:
+//!
+//! - [`Vm::image`]
+//! - [`Vm::write_image_to`]
+//! - `impl From<&Image> for Vm`
+//! - `impl<R: Read> from<R> for Vm`
+//!
+//! It is more efficient to use the convenience methods/implementations for
+//! files than to read an [`Image`] from a file and then load the `Vm` from the `Image`.
 
 use std::{
     collections::BTreeSet,
@@ -41,7 +75,7 @@ use std::{
 use crate::{
     Image, Instruction, Operation,
     image::{ImageEntries, ImageEntryRef},
-    is::{ITypePayload, InstructionError, Payload, RTypePayload, inst},
+    is::{ITypePayload, InstructionError, Payload, RTypePayload},
 };
 
 /// The number of byte addresses in each block of VM memory.
@@ -180,7 +214,7 @@ impl Block {
     /// Create a new zeroed memory block.
     ///
     /// Note that writes to [empty blocks](Block::Empty)
-    /// automatically allocated memory, so creating a
+    /// automatically allocate memory, so creating a
     /// zeroed memory block is only necessary if you need
     /// to proactively allocate memory.
     pub fn new_memory() -> Self {
@@ -498,6 +532,36 @@ pub struct VmWrite<'a> {
 type ExecuteResult = Result<(Instruction, InstructionOutcome), InstructionError>;
 
 /// Instance of the Alphabet virtual machine.
+///
+/// A completely bare VM instance can be created with [`Vm::new`],
+/// although it is much more common to [load or build from an image](crate::image).
+///
+/// The VM instance tracks its register values, the state of its program counter,
+/// and all blocks of its memory.
+///
+/// # I/O controllers
+///
+/// I/O controllers can be mapped to blocks of VM memory through
+/// [`Vm::set_block`] and [`Block::with_controller`]. Controllers may only update
+/// their state when written to or when [ticked](IoController::tick), so the VM
+/// needs a scheme for ticking I/O devices before they're read. There are two such
+/// schemes:
+///
+/// - **Tick-on-read** (default): instructions that load from memory
+/// tick the I/O device they're reading from if appropriate.
+/// - **Tick manually**: the host is in control of when the I/O devices
+/// are ticked.
+///
+/// Tick-on-read is configured with [`Vm::set_tick_on_read`].
+///
+/// ## Manual ticking
+///
+/// The host must use VM APIs to tick I/O controllers because the VM owns said
+/// controllers. The host can track I/O controller indices on its own and tick
+/// them using [`Vm::tick`]. The VM also tracks all of its I/O devices in an
+/// internal cache; periodic calls to [`Vm::tick_all`] are efficient.
+///
+///
 pub struct Vm {
     program_counter: u32,
     registers: [u32; REGISTER_COUNT],
@@ -510,7 +574,7 @@ pub struct Vm {
 }
 
 impl Vm {
-    /// Create a new virtual machine.
+    /// Create a new blank virtual machine.
     pub fn new() -> Self {
         let blocks = iter::repeat_with(|| Block::Empty)
             .take(BLOCK_COUNT)
@@ -546,7 +610,7 @@ impl Vm {
         self.io_status = IoStatus::Known;
     }
 
-    /// Get the word address of the next
+    /// Returns the word address of the next
     /// instruction to execute.
     pub fn program_counter(&self) -> u32 {
         self.program_counter
@@ -564,7 +628,7 @@ impl Vm {
         self.registers[index % REGISTER_COUNT]
     }
 
-    /// Read the value of all regiters.
+    /// Read the value of all registers.
     pub fn registers(&self) -> &[u32; REGISTER_COUNT] {
         &self.registers
     }
@@ -597,12 +661,12 @@ impl Vm {
         &mut self.blocks
     }
 
-    /// Get a block of memory with the given index.
+    /// Get the block of memory at the given index.
     pub fn block(&self, block_index: u16) -> &Block {
         &self.blocks[block_index as usize]
     }
 
-    /// Get a mutable block of memory with the given index.
+    /// Get a mutable block of memory at the given index.
     pub fn block_mut(&mut self, block_index: u16) -> &mut Block {
         let block_index = block_index as usize;
 
@@ -628,7 +692,7 @@ impl Vm {
         (self.block(block_index), offset)
     }
 
-    /// Get a block from the requested byte address,
+    /// Get a mutable block from the requested byte address,
     /// returning the block and the offset.
     pub fn block_from_addr_mut(&mut self, address: u32) -> (&mut Block, u16) {
         let block_index = (address >> 16) as u16;
@@ -658,6 +722,11 @@ impl Vm {
 
     /// Get a block of memory. If it is empty,
     /// create a new read/write memory block.
+    ///
+    /// Note that writes to [empty blocks](Block::Empty)
+    /// automatically allocate memory, so creating a
+    /// zeroed memory block is only necessary if you need
+    /// to proactively allocate memory.
     pub fn get_block_or_create(&mut self, block_index: u16) -> (&mut Block, BlockExistence) {
         let block = self.block_mut(block_index);
         if block.is_empty() {
@@ -670,24 +739,26 @@ impl Vm {
 
     /// Whether memory-read instructions automatically
     /// tick an I/O device when reading memory from
-    /// its block.
+    /// its block. The default value is [`true`].
     pub fn tick_on_read(&self) -> bool {
         self.tick_on_read
     }
 
     /// Set whether memory-read instructions automatically
     /// tick an I/O device when reading memory from its
-    /// block.
+    /// block. The default value is [`true`].
     pub fn set_tick_on_read(&mut self, tick_on_read: bool) {
         self.tick_on_read = tick_on_read;
     }
 
-    /// Notify all I/O controllers they may update their state.
+    /// Tick the block at the specified index.
     ///
-    /// This method uses an internal cache of I/O mapped blocks.
-    /// The [`Vm::blocks_mut`] method resets this cache, leading
-    /// to poorer performance for the next call to `tick_all`.
-    pub fn tick_all(&mut self) {
+    /// Returns [`true`] if the block was I/O-mapped.
+    pub fn tick(&mut self, block_index: u16) -> bool {
+        self.blocks[block_index as usize].tick()
+    }
+
+    fn refresh_index_cache(&mut self, tick_refreshed: bool) -> bool {
         // Refresh index cache.
         if let IoStatus::CheckAll = self.io_status {
             // If all need to be checked,
@@ -698,15 +769,16 @@ impl Vm {
                 .enumerate()
                 .filter_map(|(i, b)| {
                     b.is_io().then(|| {
-                        b.tick();
+                        if tick_refreshed {
+                            b.tick();
+                        }
                         i
                     })
                 })
                 .collect();
             self.io_status = IoStatus::Known;
-            return;
+            return true;
         }
-
         if let IoStatus::Check(ref indices) = self.io_status {
             for &index in indices {
                 let is_io = self.blocks[index].is_io();
@@ -717,6 +789,24 @@ impl Vm {
                 }
             }
             self.io_status = IoStatus::Known;
+        }
+        false
+    }
+
+    /// Get the indices of all I/O-mapped blocks of VM memory.
+    pub fn io_block_indices(&mut self) -> impl Iterator<Item = u16> {
+        self.refresh_index_cache(false);
+        self.io_indices.iter().map(|&index| index as u16)
+    }
+
+    /// Notify all I/O controllers they may update their state.
+    ///
+    /// This method uses an internal cache of I/O mapped blocks.
+    /// The [`Vm::blocks_mut`] method resets this cache, leading
+    /// to poorer performance for the next call to `tick_all`.
+    pub fn tick_all(&mut self) {
+        if self.refresh_index_cache(true) {
+            return;
         }
         for &block_index in &self.io_indices {
             self.blocks[block_index].tick();
@@ -993,6 +1083,9 @@ impl Vm {
     }
 
     /// Execute an instruction on the VM.
+    ///
+    /// This does _not_ advance the program counter, although
+    /// the instruction itself may move the program counter.
     pub fn execute(&mut self, instruction: &Instruction) -> InstructionOutcome {
         let operation = instruction.operation();
         let payload = instruction.payload();
@@ -1053,6 +1146,11 @@ impl Vm {
     }
 
     /// Execute instructions sequentially as long as a condition is met.
+    ///
+    /// Instruction errors are ignored and execution proceeds as normal
+    /// even when a valid instruction cannot be decoded. To stop executing
+    /// when an invalid instruction is reached, see
+    /// [`run_while_valid`](Self::run_while_valid).
     pub fn run_while(&mut self, mut predicate: impl FnMut(&Vm) -> bool) {
         while predicate(self) {
             // Ignore instruction errors.
@@ -1061,7 +1159,7 @@ impl Vm {
     }
 
     /// Execute instructions sequentially until a condition on the last
-    /// completed instruction is met.
+    /// decoded and executed instruction is met.
     pub fn run_until_instruction(
         &mut self,
         mut predicate: impl FnMut(&ExecuteResult) -> bool,
@@ -1095,9 +1193,9 @@ impl Vm {
                 }
                 let payload = instruction
                     .i_type_payload()
-                    .expect("jpm instruction should have r-type payload");
+                    .expect("jmp instruction should have I-type payload");
                 let imm = payload.immediate_value();
-                // Jump to current statement infinitely.
+                // imm==0 means jump to current statement infinitely.
                 imm == 0
             })
         })
@@ -1123,6 +1221,10 @@ impl Vm {
     }
 
     /// Get an image of the VM.
+    ///
+    /// **Note**: If it is your end goal to do so, it is more
+    /// efficient to use [`write_image_to`](write_image_to) to
+    /// write directly to a file or other writer.
     pub fn image(&self) -> Image {
         FromIterator::from_iter(ImageEntries::from(self))
     }
