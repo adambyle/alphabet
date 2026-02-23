@@ -605,6 +605,22 @@ impl Instruction {
         &self.payload
     }
 
+    pub const fn r_type_payload(&self) -> Option<&RTypePayload> {
+        if let Payload::RType(ref payload) = self.payload {
+            Some(payload)
+        } else {
+            None
+        }
+    }
+
+    pub const fn i_type_payload(&self) -> Option<&ITypePayload> {
+        if let Payload::IType(ref payload) = self.payload {
+            Some(payload)
+        } else {
+            None
+        }
+    }
+
     /// Encode the instruction into its binary representation.
     pub const fn encode(&self) -> u32 {
         ((self.operation.opcode() as u32) << Self::OPCODE_OFFSET) | self.payload.encode()

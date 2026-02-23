@@ -127,6 +127,11 @@ impl ImageBuilder {
         }
     }
 
+    /// Get the position of the cursor.
+    pub fn cursor(&self) -> u32 {
+        self.cursor
+    }
+
     /// Move the cursor to the specified location.
     pub fn seek(mut self, cursor: u32) -> Self {
         self.cursor = cursor;
@@ -181,8 +186,8 @@ impl ImageBuilder {
         } else {
             None
         };
-        let start_next = if index < self.writes.len() - 1 {
-            let next = &self.writes[index + 1];
+        let start_next = if index < self.writes.len() {
+            let next = &self.writes[index];
             if end >= next.cursor {
                 self.error.get_or_insert(ImageBuildError::Overlap {
                     write_1: (next.cursor, next.payload.len()),

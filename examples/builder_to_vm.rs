@@ -1,4 +1,4 @@
-use alphabet::{image::ImageBuilder, is::inst, vm::Vm};
+use alphabet::{ImageBuilder, Vm, is::inst};
 
 fn main() {
     const LEN_ADDR: u32 = 0x30;
@@ -7,7 +7,6 @@ fn main() {
     const R_LEN: usize = 2;
     const R_SUM: usize = 3;
     const R_ARRAY_ELEM: usize = 4;
-    const END_PC: u32 = 9;
 
     let array = vec![4u8, 7u8, -2i8 as u8];
     let len = array.len() as u8;
@@ -35,7 +34,7 @@ fn main() {
     let mut vm: Vm = builder.build().expect("failed to build VM");
 
     // Execute until the last instruction is reached.
-    vm.run_to_pc(END_PC);
+    vm.run_until_loop();
 
     // Print the sum.
     let sum = vm.register(R_SUM);
