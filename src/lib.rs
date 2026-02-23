@@ -47,6 +47,8 @@
 //! sums the elements of an array.
 //!
 //! ```
+//! use alphabet::{ImageBuilder, Vm, is::inst};
+//!
 //! fn main() {
 //!     const LEN_ADDR: u32 = 0x30;
 //!     const ARRAY_ADDR: u32 = 0x31;
