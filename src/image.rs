@@ -2,7 +2,7 @@
 //!
 //! [Images](Image) are made up of [entries](ImageEntry), which are bundles of
 //! binary data with the address they belong at. In practice, loading an image
-//! entails creating a new VM and writing each entry sequentially. The [`Vm`](Vm)
+//! entails creating a new VM and writing each entry sequentially. The [`Vm`]
 //! API does not care if these entries overlap or extend past the end of memory;
 //! these errors are ignored. The [`ImageBuilder`] API, however, enforces these rules.
 //!
