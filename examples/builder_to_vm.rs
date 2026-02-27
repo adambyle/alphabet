@@ -27,14 +27,14 @@ fn main() {
     ];
     let builder = ImageBuilder::new()
         .write_instructions(instructions)
-        .seek(LEN_ADDR)
+        .seek(LEN_ADDR.into())
         .write_byte(len)
-        .seek(ARRAY_ADDR)
+        .seek(ARRAY_ADDR.into())
         .write_bytes(array);
     let mut vm: Vm = builder.build().expect("failed to build VM");
 
     // Execute until the last instruction is reached.
-    vm.run_until_loop();
+    _ = vm.run_until_loop();
 
     // Print the sum.
     let sum = vm.register(R_SUM);

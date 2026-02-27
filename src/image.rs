@@ -1,11 +1,16 @@
-//! Images are compressed representations of VM memory, useful for storing
-//! and loading programs and states to and from files or other streams.
+//! Serialized format for VM programs and data.
 //!
-//! Images do not retain register values or the program counter.
+//! [Images](Image) are made up of [entries](ImageEntry), which are bundles of
+//! binary data with the address they belong at. In practice, loading an image
+//! entails creating a new VM and writing each entry sequentially. The [`Vm`](Vm)
+//! API does not care if these entries overlap or extend past the end of memory;
+//! these errors are ignored. The [`ImageBuilder`] API, however, enforces these rules.
 //!
-//! The [`Image`] API provides useful methods to construct
-//! Alphabet programs, as well as providing services
-//! for compilers and assemblers.
+//! The [`vm`](crate::vm) API has convenience methods for saving and loading images without
+//! needing to use anything in this module.
+//!
+//! The [`ImageBuilder`] struct in this module is useful for assemblers, compilers, and
+//! other cases where programs need to be built in-memory.
 
 use std::{
     borrow::Cow,
@@ -17,22 +22,22 @@ use std::{
 
 use crate::{
     is::Instruction,
-    vm::{Block, Vm},
+    vm::{Block, BlockIndex, BlockOffset, ByteAddress, Vm},
 };
 
 /// An issue with creating an image
 /// from a builder.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum ImageBuildError {
     /// A write was attempted that would extend past the end
     /// address of memory.
-    Overflow(u32, usize),
+    Overflow(ByteAddress, usize),
     /// Two writes overlap.
     Overlap {
         /// The first write.
-        write_1: (u32, usize),
+        write_1: (ByteAddress, usize),
         /// The overlapping write.
-        write_2: (u32, usize),
+        write_2: (ByteAddress, usize),
     },
 }
 
@@ -41,12 +46,17 @@ impl Display for ImageBuildError {
         match self {
             Self::Overflow(cursor, len) => write!(
                 f,
-                "write at location {cursor:#80X} of length {len} overflows"
+                "write at location {:#80X} of length {} overflows",
+                cursor.value(),
+                len,
             ),
             Self::Overlap { write_1, write_2 } => write!(
                 f,
                 "write at location {:#80X} of length {} overlaps with write at location {:#80X} of length {}",
-                write_2.0, write_2.1, write_1.0, write_1.1,
+                write_2.0.value(),
+                write_2.1,
+                write_1.0.value(),
+                write_1.1,
             ),
         }
     }
@@ -99,42 +109,95 @@ impl ImageWritePayload {
 const WRITE_MERGE_BUFFER: u32 = 8;
 
 struct ImageWrite {
-    cursor: u32,
+    cursor: ByteAddress,
     payload: ImageWritePayload,
     merge_padding: Option<usize>,
 }
 
-/// Helper API for constructing VM images.
+impl ImageWrite {
+    fn end(&self) -> u32 {
+        self.cursor.value() + (self.payload.len() as u32 - 1)
+    }
+}
+
+/// API for constructing VM images.
 ///
 /// This API is useful for compilers and assemblers
 /// to synthesize image data in an efficient way,
 /// and then either store it immediately to an image or
 /// load it to a VM.
+///
+/// Most methods take ownership of the `ImageBuilder` to enable method
+/// chaining. If any of these methods put the builder
+/// [in an error state](ImageBuildError),
+/// further methods will be ignored and the error will be returned from
+/// [`ImageBuilder::entries`] or [`ImageBuilder::build`].
+///
+/// # API
+///
+/// The `ImageBuilder` tracks a [cursor](ImageBuilder::cursor) that
+/// starts at 0 and advances automatically when data is written. The
+/// cursor can be moved with [`ImageBuilder::seek`] and [`ImageBuilder::advance`].
+///
+/// Multiple `write` methods are provided for different sizes and kinds
+/// of data. For maximum efficiency, add writes in address order. The
+/// implementation sorts writes automatically otherwise, and the outputted
+/// image is guaranteed to have its entries in order.
+///
+/// # Errors
+///
+/// The `ImageBuilder` enforces safe and consistent writes to memory,
+/// even though an [`Image`] does not carry the same guarantees. It is an
+/// error to:
+///
+/// - write past the end of memory ([`ImageBuildError::Overflow`]).
+/// - overlap one write with another ([`ImageBuildError::Overlap`]).
+///
+/// These rules help the builder output a space-efficient image.
+///
+/// # Example
+///
+/// See [crate-level documentation](crate) for a good example of `ImageBuider`.
 pub struct ImageBuilder {
-    cursor: u32,
+    cursor: ByteAddress,
+    sequential: bool,
     writes: Vec<ImageWrite>,
     error: Option<ImageBuildError>,
 }
 
 impl ImageBuilder {
-    /// Create a new image that organizes its
-    /// writes into an entry per VM block.
+    /// Start a new image.
     pub fn new() -> Self {
         Self {
-            cursor: 0,
+            cursor: 0.into(),
+            sequential: true,
             writes: Vec::new(),
             error: None,
         }
     }
 
     /// Get the position of the cursor.
-    pub fn cursor(&self) -> u32 {
+    pub fn cursor(&self) -> ByteAddress {
         self.cursor
     }
 
-    /// Move the cursor to the specified location.
-    pub fn seek(mut self, cursor: u32) -> Self {
+    /// Move the cursor to the specified byte address.
+    ///
+    /// **Note**: It is most efficient to only move the cursor
+    /// forward. See [`advance`](Self::advance).
+    pub fn seek(mut self, cursor: ByteAddress) -> Self {
+        if cursor < self.cursor {
+            self.sequential = false;
+        }
         self.cursor = cursor;
+        self
+    }
+
+    /// Move the cursor forward the specified amount of bytes.
+    ///
+    /// It is an [error](ImageBuildError::Overflow) for the address to overflow.
+    pub fn advance(mut self, offset: u32) -> Self {
+        self.advance_checked(offset as usize);
         self
     }
 
@@ -147,6 +210,12 @@ impl ImageBuilder {
         self.cursor = next_cursor;
     }
 
+    /// If the builder is in an error state from a previous write,
+    /// return the cause of the error.
+    pub fn error(&self) -> Option<ImageBuildError> {
+        self.error.clone()
+    }
+
     fn write(&mut self, payload: ImageWritePayload) {
         let len = payload.len();
         let mut write = ImageWrite {
@@ -154,6 +223,21 @@ impl ImageBuilder {
             cursor: self.cursor,
             merge_padding: None,
         };
+
+        // If writes have so far been sequential, no need
+        // for checking.
+        if self.sequential {
+            if let Some(previous) = self.writes.last() {
+                let end_previous = previous.end();
+                let diff = self.cursor.value() - end_previous;
+                if diff < WRITE_MERGE_BUFFER {
+                    write.merge_padding = Some(diff as usize - 1);
+                }
+            }
+            self.writes.push(write);
+            self.advance_checked(len);
+            return;
+        }
 
         // Determine insertion point (writes maintain order).
         let index = self.writes.binary_search_by_key(&self.cursor, |w| w.cursor);
@@ -171,11 +255,11 @@ impl ImageBuilder {
         };
 
         // Check for overlaps.
-        let end = self.cursor + (len as u32 - 1);
+        let end = write.end();
         let end_previous = if index > 0 {
             let previous = &self.writes[index - 1];
-            let end_previous = previous.cursor + (previous.payload.len() as u32 - 1);
-            if end_previous >= self.cursor {
+            let end_previous = previous.end();
+            if end_previous >= self.cursor.value() {
                 self.error.get_or_insert(ImageBuildError::Overlap {
                     write_1: (previous.cursor, previous.payload.len()),
                     write_2: (self.cursor, len),
@@ -188,10 +272,10 @@ impl ImageBuilder {
         };
         let start_next = if index < self.writes.len() {
             let next = &self.writes[index];
-            if end >= next.cursor {
+            if end >= next.cursor.value() {
                 self.error.get_or_insert(ImageBuildError::Overlap {
-                    write_1: (next.cursor, next.payload.len()),
                     write_2: (self.cursor, len),
+                    write_1: (next.cursor, next.payload.len()),
                 });
                 return;
             }
@@ -200,17 +284,16 @@ impl ImageBuilder {
             None
         };
 
-        // Insert new write.
-        // TODO merge writes if possible.
+        // Insert new write. Merge writes if possible.
         // (Within 8 bytes justifies merging.)
         if let Some(end_previous) = end_previous {
-            let diff = self.cursor - end_previous;
+            let diff = self.cursor.value() - end_previous;
             if diff < WRITE_MERGE_BUFFER {
                 self.writes[index - 1].merge_padding = Some(diff as usize - 1);
             }
         }
         if let Some(start_next) = start_next {
-            let diff = start_next - end;
+            let diff = start_next.value() - end;
             if diff < WRITE_MERGE_BUFFER {
                 write.merge_padding = Some(diff as usize - 1);
             }
@@ -288,29 +371,32 @@ impl ImageBuilder {
     }
 
     /// Write an instruction at the cursor.
-    /// This automatically word-aligns the cursor.
+    ///
+    /// This automatically word-aligns the cursor, rounding up.
     pub fn write_instruction(mut self, instruction: &Instruction) -> Self {
         // Align the cursor. Round up.
-        self.advance_checked(3);
-        self.cursor >>= 2;
-        self.cursor <<= 2;
-
+        self.cursor = self.cursor.word_address_round_up().0.into();
         self.write_word(instruction.encode())
     }
 
     /// Write a sequence of instructions at the cursor.
-    /// This automatically word-aligns the cursor.
+    ///
+    /// This automatically word-aligns the cursor, rounding up.
     pub fn write_instructions(mut self, instructions: &[Instruction]) -> Self {
         // Align the cursor. Round up.
-        self.advance_checked(3);
-        self.cursor >>= 2;
-        self.cursor <<= 2;
-
+        self.cursor = self.cursor.word_address_round_up().0.into();
         self.write_words(instructions.iter().map(|i| i.encode()).collect())
     }
 
     /// Consume the builder, outputting the entries that
     /// make up the resulting image.
+    ///
+    /// See [`build`](Self::build) to create a [`Vm`] or [`Image`] directly.
+    ///
+    /// # Errors
+    ///
+    /// This returns the error if the builder is in an error state. See
+    /// struct-level documentation for details on error states.
     pub fn entries(self) -> Result<ImageEntries<'static>, ImageBuildError> {
         if let Some(err) = self.error {
             return Err(err);
@@ -341,6 +427,11 @@ impl ImageBuilder {
     }
 
     /// Consume the builder, building into an image or VM.
+    ///
+    /// # Errors
+    ///
+    /// This returns the error if the builder is in an error state. See
+    /// struct-level documentation for details on error states.
     pub fn build<T: FromIterator<ImageEntryRef<'static>>>(self) -> Result<T, ImageBuildError> {
         let entries = self.entries()?;
         Ok(FromIterator::from_iter(entries))
@@ -357,7 +448,12 @@ pub enum ImageEntryError {
     /// The data is empty.
     Empty,
     /// The end offset is less than the start offset.
-    BadOffsets { start: u32, end: u32 },
+    BadOffsets {
+        /// The start offset.
+        start: ByteAddress,
+        /// The end offset.
+        end: ByteAddress,
+    },
 }
 
 impl Display for ImageEntryError {
@@ -369,7 +465,9 @@ impl Display for ImageEntryError {
             Self::BadOffsets { start, end } => {
                 write!(
                     f,
-                    "end offset {end:80X} comes before start offset {start:80X}",
+                    "end offset {:#80X} comes before start offset {:#80X}",
+                    start.value(),
+                    end.value(),
                 )
             }
         }
@@ -380,8 +478,11 @@ impl Error for ImageEntryError {}
 
 /// An entry in the image associated with a sequence of bytes
 /// in memory.
+///
+/// An entry is simply an address followed by the bytes to be
+/// written at that address.
 pub struct ImageEntry {
-    address: u32,
+    address: ByteAddress,
     data: Vec<u8>,
 }
 
@@ -395,7 +496,12 @@ fn next_be_u32(iter: &mut impl Iterator<Item = u8>) -> Option<u32> {
 
 impl ImageEntry {
     /// Create a new image entry.
-    pub fn new(address: u32, data: Vec<u8>) -> Result<Self, ImageEntryError> {
+    ///
+    /// # Errors
+    ///
+    /// See [`ImageEntryError`]. Although consumers of `ImageEntry` can handle
+    /// malformed entries, this API prevents invalid representations.
+    pub fn new(address: ByteAddress, data: Vec<u8>) -> Result<Self, ImageEntryError> {
         if data.is_empty() {
             return Err(ImageEntryError::Empty);
         }
@@ -412,20 +518,20 @@ impl ImageEntry {
         let end_offset = next_be_u32(iter).ok_or(ImageEntryError::Incomplete)?;
         if end_offset < start_offset {
             return Err(ImageEntryError::BadOffsets {
-                start: start_offset,
-                end: end_offset,
+                start: start_offset.into(),
+                end: end_offset.into(),
             });
         }
         let length = end_offset as usize - start_offset as usize + 1;
         let data: Vec<u8> = iter.by_ref().take(length).collect();
         Ok(Self {
-            address: start_offset,
+            address: start_offset.into(),
             data,
         })
     }
 
     /// The address of the start of the data.
-    pub fn address(&self) -> u32 {
+    pub fn address(&self) -> ByteAddress {
         self.address
     }
 
@@ -444,15 +550,19 @@ impl<'a> From<ImageEntryRef<'a>> for ImageEntry {
     }
 }
 
-/// A reference to data in an image entry.
+/// An owned or borrowed image entry.
+///
+/// The `ImageEntryRef` API is used in the [`ImageEntries`]
+/// iterator to support adaptation from both owned and borrowed
+/// image sources.
 pub struct ImageEntryRef<'a> {
-    address: u32,
+    address: ByteAddress,
     data: Cow<'a, [u8]>,
 }
 
 impl<'a> ImageEntryRef<'a> {
     /// The address of the start of the data.
-    pub fn address(&self) -> u32 {
+    pub fn address(&self) -> ByteAddress {
         self.address
     }
 
@@ -466,8 +576,8 @@ impl<'a> ImageEntryRef<'a> {
         // It is enforced by the API that all entries are valid, meaning:
         // - No entry goes beyond the last address.
         // - All entries are at least 1 in length.
-        let start = self.address;
-        let end = self.address + (self.data.len() - 1) as u32;
+        let start = self.address.value();
+        let end = start + (self.data.len() - 1) as u32;
         let start_bytes = start.to_be_bytes();
         let end_bytes = end.to_be_bytes();
         writer.write(&start_bytes)?;
@@ -496,11 +606,24 @@ impl<'a> From<&'a ImageEntry> for ImageEntryRef<'a> {
 }
 
 /// An iterator producing image entries, chunks of memory
-/// to be written to a VM.
+/// to be written to a VM or file.
+///
+/// The `ImageEntries` iterator is a flexible adapter between
+/// image media. It can facilitate efficient data transfer between
+/// [`Vm`] instances, [`Image`] structs, and files (or other readers
+/// and writers).
+///
+/// You will not often used this API directly; each medium has its own
+/// helper methods for conversion that leverage `ImageEntries` internally.
 pub enum ImageEntries<'a> {
     /// The image entries are produced from each block
     /// of written VM memory.
-    Vm { vm: &'a Vm, block_index: u16 },
+    Vm {
+        /// A reference to the virtual machine the entries come from.
+        vm: &'a Vm,
+        /// The current block index being read from.
+        block_index: BlockIndex,
+    },
 
     /// The image entries are produced from an Image.
     Entries(Box<dyn Iterator<Item = ImageEntryRef<'a>> + 'a>),
@@ -525,11 +648,12 @@ impl<'a> Iterator for ImageEntries<'a> {
     fn next(&mut self) -> Option<Self::Item> {
         match self {
             Self::Vm { vm, block_index } => {
-                while *block_index <= u16::MAX {
+                let mut block_index = *block_index;
+                while block_index.value() <= u16::MAX {
                     // Get block of memory, if present.
-                    let current_block_index = *block_index;
+                    let current_block_index = block_index;
                     let block = vm.block(current_block_index);
-                    *block_index += 1;
+                    block_index = (block_index.value() + 1).into();
                     let Block::Memory(memory) = block else {
                         continue;
                     };
@@ -538,10 +662,11 @@ impl<'a> Iterator for ImageEntries<'a> {
                     let Some(start) = memory.iter().position(|&b| b != 0) else {
                         continue;
                     };
+                    let start_offset = BlockOffset::from(start as u16);
                     // Unwrap: guaranteed to be at least `start`.
                     let end = memory.iter().rposition(|&b| b != 0).unwrap();
                     let non_zero = &memory[start..=end];
-                    let address = ((current_block_index as u32) << 16) | (start as u32);
+                    let address = current_block_index + start_offset;
                     return Some(ImageEntryRef {
                         address,
                         data: Cow::Borrowed(non_zero),
@@ -575,7 +700,7 @@ impl<'a> From<&'a Vm> for ImageEntries<'a> {
     fn from(value: &'a Vm) -> Self {
         Self::Vm {
             vm: value,
-            block_index: 0,
+            block_index: 0.into(),
         }
     }
 }
@@ -588,6 +713,17 @@ impl<'a, R: Read + 'a> From<R> for ImageEntries<'a> {
 }
 
 /// A compressed representation of VM memory.
+///
+/// An [`Image`] is the in-memory medium for images. They are
+/// simply a wrapper around a [`Vec`] of [`ImageEntry`].
+///
+/// An `Image` can contain entries that overlap or whose data goes past the
+/// last valid address. In the case of overlapping entries, later entries
+/// may overwrite earlier ones. Entries have their data cut off at the
+/// last valid address.
+///
+/// The [`ImageBuilder`] API disallows these situations, and the output
+/// from [`Vm::image`] guarantees no overlaps or overflows.
 pub struct Image {
     entries: Vec<ImageEntry>,
 }
@@ -618,7 +754,7 @@ impl Image {
     pub fn clear(&mut self, start_address: u32, end_address: u32) {
         self.entries.retain_mut(|entry| {
             // Determine whether entry is in removal bounds.
-            let entry_start = entry.address;
+            let entry_start = entry.address.value();
             let data_length = entry.data.len() as u32;
             let entry_end = entry_start + (data_length - 1);
             if entry_start > end_address || entry_end < start_address {
@@ -640,7 +776,7 @@ impl Image {
                 (end_address - entry_start) as usize
             };
             entry.data.drain(remove_start..remove_end);
-            entry.address += remove_start as u32;
+            entry.address = entry.address.overflowing_add(remove_start as u32).0;
             true
         });
     }
@@ -655,5 +791,11 @@ impl<'a> FromIterator<ImageEntryRef<'a>> for Image {
     fn from_iter<T: IntoIterator<Item = ImageEntryRef<'a>>>(iter: T) -> Self {
         let entries = iter.into_iter().map(|entry| entry.into()).collect();
         Self { entries }
+    }
+}
+
+impl<R: Read> From<R> for Image {
+    fn from(value: R) -> Self {
+        Self::from_iter(ImageEntries::from(value))
     }
 }

@@ -15,7 +15,7 @@
 //!
 //! You can read more about the motivation behind the Alphabet VM, as well
 //! as details about Alphabet's instruction set and its behavior, on
-//! [Github](https://github.com/adambyle/alphabet). The rest of this
+//! [GitHub](https://github.com/adambyle/alphabet). The rest of this
 //! documentation will describe how to work with the VM.
 //!
 //! # Hosts
@@ -27,8 +27,7 @@
 //!
 //! # Usage
 //!
-//! The [`Vm`] struct represents instances of an Alphabet virtual machine.
-//! The API provides fine control over the system's program counter, registers,
+//! The [`vm`] API provides fine control over the system's program counter, registers,
 //! and memory so that hosts can be as interactive as desired.
 //!
 //! The [`Image`] struct is used to pass around Alphabet programs and
@@ -76,14 +75,14 @@
 //!     ];
 //!     let builder = ImageBuilder::new()
 //!         .write_instructions(instructions)
-//!         .seek(LEN_ADDR)
+//!         .seek(LEN_ADDR.into())
 //!         .write_byte(len)
-//!         .seek(ARRAY_ADDR)
+//!         .seek(ARRAY_ADDR.into())
 //!         .write_bytes(array);
 //!     let mut vm: Vm = builder.build().expect("failed to build VM");
 //!
 //!     // Execute until the last instruction is reached.
-//!     vm.run_until_loop();
+//!     _ = vm.run_until_loop();
 //!
 //!     // Print the sum.
 //!     let sum = vm.register(R_SUM);

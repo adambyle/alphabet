@@ -1,5 +1,14 @@
-//! Instruction set for Alphabet's virtual machine,
-//! including instruction decoding logic.
+//! Instruction set for Alphabet's virtual machine.
+//!
+//! This module contains the logic to encode and decode
+//! Alphabet machine instructions. The [`Operation`]
+//! type provides useful constants for each instruction's
+//! opcode, and the [`Instruction`] type provides a means
+//! of creating or [decoding](Instruction::decode) an instruction
+//! in a safe manner.
+//!
+//! The [`inst`] submodule provides functions for each individual
+//! instruction to streamline creation of [`Instruction`] values.
 
 use std::{error::Error, fmt::Display};
 
@@ -25,150 +34,186 @@ impl Operation {
     /// How many possible opcodes there could be.
     pub const COUNT: usize = 1 << 6;
 
+    /// Opcode for no operation.
     pub const NOOP_CODE: u8 = 0x00;
     /// No operation.
     pub const NOOP: Self = Self(Self::NOOP_CODE);
 
     // R-type.
 
+    /// Opcode for signed and unsigned addition.
     pub const ADD_CODE: u8 = 0x01;
     /// Signed and unsigned addition.
     pub const ADD: Self = Self(Self::ADD_CODE);
 
+    /// Opcode for signed and unsigned subtraction.
     pub const SUB_CODE: u8 = 0x02;
     /// Signed and unsigned subtraction.
     pub const SUB: Self = Self(Self::SUB_CODE);
 
+    /// Opcode for logical bitshift left.
     pub const SHL_CODE: u8 = 0x03;
     /// Logical bitshift left.
     pub const SHL: Self = Self(Self::SHL_CODE);
 
+    /// Opcode for logical bitshift right.
     pub const SHR_CODE: u8 = 0x04;
     /// Logical bitshift right.
     pub const SHR: Self = Self(Self::SHR_CODE);
 
+    /// Opcode for arithmetic bitshift right.
     pub const SAR_CODE: u8 = 0x05;
     /// Arithmetic bitshift right.
     pub const SAR: Self = Self(Self::SAR_CODE);
 
+    /// Opcode for bitwise and.
     pub const AND_CODE: u8 = 0x06;
     /// Bitwise and.
     pub const AND: Self = Self(Self::AND_CODE);
 
+    /// Opcode for bitwise or.
     pub const OR_CODE: u8 = 0x08;
     /// Bitwise or.
     pub const OR: Self = Self(Self::OR_CODE);
 
+    /// Opcode for bitwise exclusive-or.
     pub const XOR_CODE: u8 = 0x0A;
     /// Bitwise exclusive-or.
     pub const XOR: Self = Self(Self::XOR_CODE);
 
+    /// Opcode for less-than comparison.
     pub const SLT_CODE: u8 = 0x0C;
     /// Less-than comparison.
     pub const SLT: Self = Self(Self::SLT_CODE);
 
+    /// Opcode for less-than unsigned comparison.
     pub const SLTU_CODE: u8 = 0x0D;
     /// Less-than unsigned comparison.
     pub const SLTU: Self = Self(Self::SLTU_CODE);
 
     // I-type.
 
+    /// Opcode for immediate unsigned value addition.
     pub const ADDI_CODE: u8 = 0x21;
     /// Immediate unsigned value addition.
     pub const ADDI: Self = Self(Self::ADDI_CODE);
 
+    /// Opcode for immediate unsigned value subtraction.
     pub const SUBI_CODE: u8 = 0x22;
     /// Immediate unsigned value subtraction.
     pub const SUBI: Self = Self(Self::SUBI_CODE);
 
+    /// Opcode for immediate logical bitshift left.
     pub const SHLI_CODE: u8 = 0x23;
     /// Immediate logical bitshift left.
     pub const SHLI: Self = Self(Self::SHLI_CODE);
 
+    /// Opcode for immediate logical bitshift right.
     pub const SHRI_CODE: u8 = 0x24;
     /// Immediate logical bitshift right.
     pub const SHRI: Self = Self(Self::SHRI_CODE);
 
+    /// Opcode for immediate larithmetic bitshift right.
     pub const SARI_CODE: u8 = 0x25;
     /// Immediate larithmetic bitshift right.
     pub const SARI: Self = Self(Self::SARI_CODE);
 
+    /// Opcode for immediate bitwise and, lower 16 bits.
     pub const ANDI_CODE: u8 = 0x26;
     /// Immediate bitwise and, lower 16 bits.
     pub const ANDI: Self = Self(Self::ANDI_CODE);
 
+    /// Opcode for immediate bitwise and, upper 16 bits.
     pub const ANDUI_CODE: u8 = 0x27;
     /// Immediate bitwise and, upper 16 bits.
     pub const ANDUI: Self = Self(Self::ANDUI_CODE);
 
+    /// Opcode for immediate bitwise or, lower 16 bits.
     pub const ORI_CODE: u8 = 0x28;
     /// Immediate bitwise or, lower 16 bits.
     pub const ORI: Self = Self(Self::ORI_CODE);
 
+    /// Opcode for immediate bitwise or, upper 16 bits.
     pub const ORUI_CODE: u8 = 0x29;
     /// Immediate bitwise or, upper 16 bits.
     pub const ORUI: Self = Self(Self::ORUI_CODE);
 
+    /// Opcode for immediate bitwise exclusive-or, lower 16 bits.
     pub const XORI_CODE: u8 = 0x2A;
     /// Immediate bitwise exclusive-or, lower 16 bits.
     pub const XORI: Self = Self(Self::XORI_CODE);
 
+    /// Opcode for immediate bitwise exclusive-or, upper 16 bits.
     pub const XORUI_CODE: u8 = 0x2B;
     /// Immediate bitwise exclusive-or, upper 16 bits.
     pub const XORUI: Self = Self(Self::XORUI_CODE);
 
+    /// Opcode for less-than immediate signed comparison.
     pub const SLTI_CODE: u8 = 0x2C;
     /// Less-than immediate signed comparison.
     pub const SLTI: Self = Self(Self::SLTI_CODE);
 
+    /// Opcode for less-than immediate unsigned comparison.
     pub const SLTUI_CODE: u8 = 0x2D;
     /// Less-than immediate unsigned comparison.
     pub const SLTUI: Self = Self(Self::SLTUI_CODE);
 
+    /// Opcode for load word from memory.
     pub const LDW_CODE: u8 = 0x31;
     /// Load word from memory.
     pub const LDW: Self = Self(Self::LDW_CODE);
 
+    /// Opcode for load half-word from memory.
     pub const LDHW_CODE: u8 = 0x32;
     /// Load half-word from memory.
     pub const LDHW: Self = Self(Self::LDHW_CODE);
 
+    /// Opcode for load unsigned half-word from memory.
     pub const LDHWU_CODE: u8 = 0x33;
     /// Load unsigned half-word from memory.
     pub const LDHWU: Self = Self(Self::LDHWU_CODE);
 
+    /// Opcode for load byte from memory.
     pub const LDB_CODE: u8 = 0x34;
     /// Load byte from memory.
     pub const LDB: Self = Self(Self::LDB_CODE);
 
+    /// Opcode for load unsigned byte from memory.
     pub const LDBU_CODE: u8 = 0x35;
     /// Load unsigned byte from memory.
     pub const LDBU: Self = Self(Self::LDBU_CODE);
 
+    /// Opcode for store word to memory.
     pub const STW_CODE: u8 = 0x36;
     /// Store word to memory.
     pub const STW: Self = Self(Self::STW_CODE);
 
+    /// Opcode for store half-word to memory.
     pub const STHW_CODE: u8 = 0x37;
     /// Store half-word to memory.
     pub const STHW: Self = Self(Self::STHW_CODE);
 
+    /// Opcode for store byte to memory.
     pub const STB_CODE: u8 = 0x38;
     /// Store byte to memory.
     pub const STB: Self = Self(Self::STB_CODE);
 
+    /// Opcode for jump and link by offset.
     pub const JMP_CODE: u8 = 0x39;
     /// Jump and link by offset.
     pub const JMP: Self = Self(Self::JMP_CODE);
 
+    /// Opcode for jump and link relative to register.
     pub const JMPR_CODE: u8 = 0x3A;
     /// Jump and link relative to register.
     pub const JMPR: Self = Self(Self::JMPR_CODE);
 
+    /// Opcode for branch by offset if equal.
     pub const BEQ_CODE: u8 = 0x3B;
     /// Branch by offset if equal.
     pub const BEQ: Self = Self(Self::BEQ_CODE);
 
+    /// Opcode for branch by offset if not equal.
     pub const BNE_CODE: u8 = 0x3C;
     /// Branch by offset if not equal.
     pub const BNE: Self = Self(Self::BNE_CODE);
@@ -287,11 +332,12 @@ impl Operation {
 
     /// The instruction encoding for this operation.
     pub const fn encoding(&self) -> Encoding {
+        const COUNT: u8 = Operation::COUNT as u8;
         match self.opcode() {
             Self::NOOP_CODE => Encoding::Noop,
             0x01..=0x1F => Encoding::RType,
             0x20..=0x3F => Encoding::IType,
-            _ => unreachable!(),
+            COUNT.. => unreachable!(),
         }
     }
 }
@@ -305,14 +351,14 @@ impl Display for Operation {
 
 /// Bitmask for a 5-bit register index.
 pub const REGISTER_MASK: u32 = 0b11111;
-/// Bitmask for an instruction opcode.
+/// Bitmask for a 6-bit instruction opcode.
 pub const OPCODE_MASK: u32 = 0b111111;
 /// Bitmask for a 16-bit immediate value.
 pub const IMMEDIATE_MASK: u32 = 0xFFFF;
 
 /// The provided register index is invalid.
 #[derive(Debug)]
-pub struct RegisterError(usize);
+pub struct RegisterError(pub usize);
 
 impl Display for RegisterError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -344,6 +390,11 @@ impl RTypePayload {
     pub const REGISTER_B_OFFSET: usize = 11;
 
     /// Create R-type payload from data.
+    ///
+    /// # Errors
+    ///
+    /// This function returns an error if any provided
+    /// register index is invalid.
     pub const fn new(
         register_r_index: usize,
         register_a_index: usize,
@@ -421,6 +472,11 @@ impl ITypePayload {
     pub const IMMEDIATE_OFFSET: usize = 0;
 
     /// Create I-type payload from data.
+    ///
+    /// # Errors
+    ///
+    /// This function returns an error if any provided
+    /// register index is invalid.
     pub const fn new(
         register_r_index: usize,
         register_a_index: usize,
@@ -489,9 +545,39 @@ pub enum Payload {
 }
 
 impl Payload {
-    /// No-op payload.
-    pub const fn noop() -> Self {
+    /// Create no-op payload.
+    pub const fn new_noop() -> Self {
         Self::Noop(NoopPayload)
+    }
+
+    /// Create R-type payload from data.
+    ///
+    /// # Errors
+    ///
+    /// This function returns an error if any provided
+    /// register index is invalid.
+    pub fn new_r_type(
+        register_r_index: usize,
+        register_a_index: usize,
+        register_b_index: usize,
+    ) -> Result<Self, RegisterError> {
+        let payload = RTypePayload::new(register_r_index, register_a_index, register_b_index)?;
+        Ok(Self::RType(payload))
+    }
+
+    /// Create I-type payload from data.
+    ///
+    /// # Errors
+    ///
+    /// This function returns an error if any provided
+    /// register index is invalid.
+    pub fn new_i_type(
+        register_r_index: usize,
+        register_a_index: usize,
+        immediate_value: u16,
+    ) -> Result<Self, RegisterError> {
+        let payload = ITypePayload::new(register_r_index, register_a_index, immediate_value)?;
+        Ok(Self::IType(payload))
     }
 
     /// The encoding of this kind of payload.
@@ -528,7 +614,10 @@ pub enum InstructionError {
     },
     /// The opcode in the encoded instruction did
     /// not represent a valid operation.
-    InvalidOperation { opcode: u8 },
+    InvalidOperation {
+        /// The opcode that does not represent a valid operation.
+        opcode: u8,
+    },
 }
 
 impl Display for InstructionError {
@@ -555,6 +644,13 @@ impl Display for InstructionError {
 impl Error for InstructionError {}
 
 /// A machine instruction.
+///
+/// The API enforces that all [`Instruction`] values
+/// are valid.
+///
+/// You can create instructions with [`Instruction::new`],
+/// decode them with [`Instruction::decode`], and create them
+/// with dedicated functions in the [`inst`] submodule.
 #[derive(Debug)]
 pub struct Instruction {
     operation: Operation,
@@ -566,6 +662,11 @@ impl Instruction {
     pub const OPCODE_OFFSET: usize = 26;
 
     /// Create an instruction from its operation and payload.
+    ///
+    /// # Errors
+    ///
+    /// This function returns an error when the encoding required
+    /// by the operation does not match the encoding of the payload.
     pub fn new(operation: Operation, payload: Payload) -> Result<Self, InstructionError> {
         let payload_encoding = payload.encoding();
         if operation.encoding() != payload_encoding {
@@ -578,12 +679,18 @@ impl Instruction {
     }
 
     /// Decode an instruction from its binary representation.
+    ///
+    /// # Errors
+    ///
+    /// This function returns an error when the encoding required
+    /// by the operation does not match the encoding of the payload,
+    /// or when the embedded opcode does not match a valid operation.
     pub fn decode(word: u32) -> Result<Self, InstructionError> {
         let opcode = ((word >> Self::OPCODE_OFFSET) & OPCODE_MASK) as u8;
         let operation =
             Operation::new(opcode).ok_or(InstructionError::InvalidOperation { opcode })?;
         let payload = match operation.encoding() {
-            Encoding::Noop => Payload::noop(),
+            Encoding::Noop => Payload::new_noop(),
             Encoding::RType => Payload::RType(RTypePayload::decode(word)),
             Encoding::IType => Payload::IType(ITypePayload::decode(word)),
         };
@@ -605,6 +712,8 @@ impl Instruction {
         &self.payload
     }
 
+    /// Extract the payload of the instruction if it
+    /// is an R-type instruction.
     pub const fn r_type_payload(&self) -> Option<&RTypePayload> {
         if let Payload::RType(ref payload) = self.payload {
             Some(payload)
@@ -613,6 +722,8 @@ impl Instruction {
         }
     }
 
+    /// Extract the payload of the instruction if it
+    /// is an I-type instruction.
     pub const fn i_type_payload(&self) -> Option<&ITypePayload> {
         if let Payload::IType(ref payload) = self.payload {
             Some(payload)
@@ -628,6 +739,27 @@ impl Instruction {
 }
 
 /// Preconfigured instructions.
+///
+/// This module provides functions for each machine instruction
+/// to create [`Instruction`] values without having to check
+/// for valid opcodes and register values using [`Instruction::new`]
+/// and providing a slimmer way to express instruction payload.
+///
+/// Compare two ways to write the same instruction:
+///
+/// ```
+/// let jmp = Instruction::new(
+///     Operation::JMP,
+///     Payload::new_i_type(0, 0, 0x20).expect("invalid register indices"),
+/// )
+/// .expect("error creating instruction");
+///
+/// let jmp = inst::jmp(0, 0x20);
+/// ```
+///
+/// # Panics
+///
+/// Any function in this module will panic if an invalid register index is provided.
 pub mod inst {
     use super::{ITypePayload, Instruction, NoopPayload, Operation, Payload, RTypePayload};
 
@@ -690,7 +822,7 @@ pub mod inst {
         r_type(Operation::OR, register_r, register_a, register_b)
     }
 
-    /// A xor instruction.
+    /// An xor instruction.
     pub fn xor(register_r: usize, register_a: usize, register_b: usize) -> Instruction {
         r_type(Operation::XOR, register_r, register_a, register_b)
     }
@@ -750,12 +882,12 @@ pub mod inst {
         i_type(Operation::ORUI, register_r, register_a, immediate_value)
     }
 
-    /// A xori instruction.
+    /// An xori instruction.
     pub fn xori(register_r: usize, register_a: usize, immediate_value: u16) -> Instruction {
         i_type(Operation::XORI, register_r, register_a, immediate_value)
     }
 
-    /// A xorui instruction.
+    /// An xorui instruction.
     pub fn xorui(register_r: usize, register_a: usize, immediate_value: u16) -> Instruction {
         i_type(Operation::XORUI, register_r, register_a, immediate_value)
     }
