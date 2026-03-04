@@ -787,7 +787,7 @@ impl Instruction {
 /// Compare two ways to write the same instruction:
 ///
 /// ```
-/// # use alphabet::is::{Instruction, Operation, Payload, inst};
+/// # use alphabetvm::is::{Instruction, Operation, Payload, inst};
 /// let jmp = Instruction::new(
 ///     Operation::JMP,
 ///     Payload::new_i_type(0, 0, 0x20).expect("invalid register indices"),

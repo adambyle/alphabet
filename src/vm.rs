@@ -394,7 +394,7 @@ fn write_memory_bytes(block_bytes: &mut BlockBytes, new_bytes: &[u8], offset: Bl
 /// implementation conventions that apply to more appropriate use cases.
 ///
 /// ```rust
-/// # use alphabet::vm::{BlockOffset, IoController};
+/// # use alphabetvm::vm::{BlockOffset, IoController};
 /// // Accumulates byte inputs into a 32-bit total.
 /// #[derive(Debug)]
 /// struct Accumulator {
