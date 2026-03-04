@@ -1,7 +1,11 @@
 [package]
-name = "alphabet"
+name = "alphabetvm"
+description = "Simple custom self-contained VM"
 version = "0.1.0"
 edition = "2024"
+license = "MIT"
+repository = "https://github.com/adambyle/alphabet"
+readme = "README.md"
 
 [dependencies]
 crossterm = "0.29.0"
