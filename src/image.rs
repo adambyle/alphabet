@@ -25,6 +25,9 @@ use crate::{
     vm::{Block, BlockIndex, BlockOffset, ByteAddress, Vm},
 };
 
+#[cfg(test)]
+mod tests;
+
 /// An issue with creating an image
 /// from a builder.
 #[derive(Debug, Clone)]
@@ -227,11 +230,11 @@ impl ImageBuilder {
         // If writes have so far been sequential, no need
         // for checking.
         if self.sequential {
-            if let Some(previous) = self.writes.last() {
+            if let Some(previous) = self.writes.last_mut() {
                 let end_previous = previous.end();
-                let diff = self.cursor.value() - end_previous;
+                let diff = self.cursor.value() - end_previous - 1;
                 if diff < WRITE_MERGE_BUFFER {
-                    write.merge_padding = Some(diff as usize - 1);
+                    previous.merge_padding = Some(diff as usize);
                 }
             }
             self.writes.push(write);
@@ -287,15 +290,15 @@ impl ImageBuilder {
         // Insert new write. Merge writes if possible.
         // (Within 8 bytes justifies merging.)
         if let Some(end_previous) = end_previous {
-            let diff = self.cursor.value() - end_previous;
+            let diff = self.cursor.value() - end_previous - 1;
             if diff < WRITE_MERGE_BUFFER {
-                self.writes[index - 1].merge_padding = Some(diff as usize - 1);
+                self.writes[index - 1].merge_padding = Some(diff as usize);
             }
         }
         if let Some(start_next) = start_next {
-            let diff = start_next.value() - end;
+            let diff = start_next.value() - end - 1;
             if diff < WRITE_MERGE_BUFFER {
-                write.merge_padding = Some(diff as usize - 1);
+                write.merge_padding = Some(diff as usize);
             }
         }
         self.writes.insert(index, write);
@@ -648,22 +651,28 @@ impl<'a> Iterator for ImageEntries<'a> {
     fn next(&mut self) -> Option<Self::Item> {
         match self {
             Self::Vm { vm, block_index } => {
-                let mut block_index = *block_index;
-                while block_index.value() <= u16::MAX {
-                    // Get block of memory, if present.
-                    let current_block_index = block_index;
+                loop {
+                    let current_block_index = *block_index;
                     let block = vm.block(current_block_index);
-                    block_index = (block_index.value() + 1).into();
+
+                    // Advance before any early returns so we never re-visit this block.
+                    let (next, overflow) = block_index.value().overflowing_add(1);
+                    *block_index = next.into();
+
                     let Block::Memory(memory) = block else {
+                        if overflow {
+                            return None;
+                        }
                         continue;
                     };
 
-                    // Find start and end of non-zero data.
                     let Some(start) = memory.iter().position(|&b| b != 0) else {
+                        if overflow {
+                            return None;
+                        }
                         continue;
                     };
                     let start_offset = BlockOffset::from(start as u16);
-                    // Unwrap: guaranteed to be at least `start`.
                     let end = memory.iter().rposition(|&b| b != 0).unwrap();
                     let non_zero = &memory[start..=end];
                     let address = current_block_index + start_offset;
@@ -672,9 +681,6 @@ impl<'a> Iterator for ImageEntries<'a> {
                         data: Cow::Borrowed(non_zero),
                     });
                 }
-
-                // End of memory reached.
-                None
             }
             Self::Entries(entries) => entries.next().map(Into::into),
             Self::Bytes(bytes) => loop {
@@ -687,6 +693,7 @@ impl<'a> Iterator for ImageEntries<'a> {
                     }
                     Err(ImageEntryError::BadOffsets { .. }) => {
                         // Ignore bad entry and assume data length zero.
+                        println!("Bruh");
                         continue;
                     }
                     _ => unreachable!(),
@@ -752,33 +759,56 @@ impl Image {
 
     /// Clear data from the image.
     pub fn clear(&mut self, start_address: u32, end_address: u32) {
+        let mut split = None;
         self.entries.retain_mut(|entry| {
-            // Determine whether entry is in removal bounds.
             let entry_start = entry.address.value();
-            let data_length = entry.data.len() as u32;
-            let entry_end = entry_start + (data_length - 1);
+            let entry_end = entry_start + (entry.data.len() as u32 - 1);
+
+            // No overlap: keep as-is.
             if entry_start > end_address || entry_end < start_address {
                 return true;
             }
-            // If entry is totally included, remove completely.
+
+            // Fully covered: drop entirely.
             if start_address <= entry_start && end_address >= entry_end {
                 return false;
             }
-            // Otherwise modify entry to remove relevant slice.
-            let remove_start = if start_address < entry_start {
-                0
-            } else {
-                (start_address - entry_start) as usize
-            };
-            let remove_end = if end_address > entry_end {
-                (data_length - 1) as usize
-            } else {
-                (end_address - entry_start) as usize
-            };
-            entry.data.drain(remove_start..remove_end);
-            entry.address = entry.address.overflowing_add(remove_start as u32).0;
+
+            // Overlap from the start: truncate the front.
+            if start_address <= entry_start {
+                let keep_start = (end_address - entry_start + 1) as usize;
+                entry.data.drain(..keep_start);
+                entry.address = ByteAddress::from(end_address + 1);
+                return true;
+            }
+
+            // Overlap from the end — truncate the back.
+            if end_address >= entry_end {
+                let keep_end = (start_address - entry_start) as usize;
+                entry.data.truncate(keep_end);
+                return true;
+            }
+
+            // Clear range is entirely within entry: split.
+            // Retain the left half in place, and stash the right half to insert after.
+            let right_start = (end_address - entry_start + 1) as usize;
+            let right_data = entry.data[right_start..].to_vec();
+            let right_address = ByteAddress::from(end_address + 1);
+            entry.data.truncate((start_address - entry_start) as usize);
+            split = Some(ImageEntry {
+                address: right_address,
+                data: right_data,
+            });
             true
         });
+
+        // Insert the right half of any split entry at the correct position.
+        if let Some(right) = split {
+            let index = self
+                .entries
+                .partition_point(|e| e.address.value() < right.address.value());
+            self.entries.insert(index, right);
+        }
     }
 
     /// Write the contents of an image.
