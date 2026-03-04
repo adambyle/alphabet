@@ -79,6 +79,9 @@ use crate::{
     is::{ITypePayload, InstructionError, Payload, RTypePayload},
 };
 
+#[cfg(test)]
+mod tests;
+
 /// A byte address into the Alphabet [`Vm`].
 ///
 /// This is simply a wrapper around [`u32`] with helper methods.
@@ -417,7 +420,7 @@ fn write_memory_bytes(block_bytes: &mut BlockBytes, new_bytes: &[u8], offset: Bl
 ///     }
 /// }
 /// ```
-pub trait IoController {
+pub trait IoController: std::fmt::Debug {
     /// Read a byte of data from the controller.
     ///
     /// The byte read is `offset` away from the first
@@ -437,7 +440,7 @@ pub trait IoController {
 /// The status of whether a queried block
 /// already existed or whether memory
 /// was allocated.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BlockExistence {
     /// The block already existed.
     Existed,
@@ -451,6 +454,7 @@ pub enum BlockExistence {
 ///
 /// Memory for a block is not allocated unless a non-zero
 /// value is written within the block.
+#[derive(Debug)]
 pub enum Block {
     /// The block has not been written and has not
     /// been mapped to an I/O controller. No space
@@ -762,7 +766,7 @@ impl Block {
 }
 
 /// The side effects of the VM successfully executing a single instruction.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct InstructionOutcome {
     /// Whether the program counter was overwritten (jumped
     /// to a location instead of advancing by 1).
@@ -773,6 +777,7 @@ pub struct InstructionOutcome {
 /// user of the reference can change the type of the
 /// block through the reference. This status value
 /// tracks which blocks need re-checks.
+#[derive(Debug)]
 enum IoStatus {
     /// The type of all blocks are known.
     Known,
@@ -824,8 +829,6 @@ pub type ExecuteResult = Result<(Instruction, InstructionOutcome), InstructionEr
 /// controllers. The host can track I/O controller indices on its own and tick
 /// them using [`Vm::tick`]. The VM also tracks all of its I/O devices in an
 /// internal cache; periodic calls to [`Vm::tick_all`] are efficient.
-///
-///
 pub struct Vm {
     program_counter: WordAddress,
     registers: [u32; REGISTER_COUNT],
@@ -1247,8 +1250,8 @@ impl Vm {
             Operation::SHLI_CODE => Some(r_a << (imm & Self::SHIFT_MASK as u16)),
             Operation::SHRI_CODE => Some(r_a >> (imm & Self::SHIFT_MASK as u16)),
             Operation::SARI_CODE => Some((r_a as i32 >> (imm & Self::SHIFT_MASK as u16)) as u32),
-            Operation::ANDI_CODE => Some(r_a & (imm as u32)),
-            Operation::ANDUI_CODE => Some(r_a & ((imm as u32) << 16)),
+            Operation::ANDI_CODE => Some(r_a & (imm as u32 | 0xFFFF0000)),
+            Operation::ANDUI_CODE => Some(r_a & ((imm as u32) << 16) | 0x0000FFFF),
             Operation::ORI_CODE => Some(r_a | (imm as u32)),
             Operation::ORUI_CODE => Some(r_a | ((imm as u32) << 16)),
             Operation::XORI_CODE => Some(r_a ^ (imm as u32)),
@@ -1327,7 +1330,7 @@ impl Vm {
             }
             Operation::JMPR_CODE => {
                 let (ret, _) = self.program_counter.overflowing_add(1);
-                self.add_program_counter(r_a.wrapping_add_signed(imm as i16 as i32));
+                self.set_program_counter(r_a.wrapping_add_signed(imm as i16 as i32).into());
                 jumped = true;
                 Some(ret.0)
             }
@@ -1451,10 +1454,8 @@ impl Vm {
 
     /// Execute instructions sequentially until the same
     /// instruction is executing infinitely (jump with offset 0).
-    ///
-    /// Returns the result of the last instruction run.
-    pub fn run_until_loop(&mut self) -> ExecuteResult {
-        self.run_until_instruction(|result| {
+    pub fn run_until_loop(&mut self) {
+        _ = self.run_until_instruction(|result| {
             result.as_ref().is_ok_and(|(instruction, _)| {
                 if instruction.operation() != Operation::JMP {
                     return false;
@@ -1466,17 +1467,18 @@ impl Vm {
                 // imm==0 means jump to current statement infinitely.
                 imm == 0
             })
-        })
+        });
     }
 
     /// Execute instructions sequentially until the program counter
     /// jumps/branches instead of advancing by 1.
     ///
-    /// Returns the result of the last instruction run.
-    pub fn run_until_jumped(&mut self) -> ExecuteResult {
+    /// Returns the outcome of the last instruction run.
+    pub fn run_until_jumped(&mut self) -> (Instruction, InstructionOutcome) {
         self.run_until_instruction(|result| {
             result.as_ref().is_ok_and(|(_, outcome)| outcome.jumped)
         })
+        .unwrap()
     }
 
     /// Execute instructions until the word at the program counter does
