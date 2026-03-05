@@ -43,14 +43,14 @@
 //!
 //! - [`run_while`](Vm::run_while) runs while a condition on the VM is met.
 //! - [`run_until_instruction`](Vm::run_until_instruction) runs until
-//! a condition on an instruction is met.
+//!   a condition on an instruction is met.
 //! - [`run_to_pc`](Vm::run_to_pc) runs to a certain word address.
 //! - [`run_until_loop`](Vm::run_until_loop) runs until a `jmp` instruction
-//! with offset 0, the conventional way to denote the end of a program.
+//!   with offset 0, the conventional way to denote the end of a program.
 //! - [`run_until_jumped`](Vm::run_until_jumped) runs until an instruction
-//! causes a jump or branch.
+//!   causes a jump or branch.
 //! - [`run_while_valid`](Vm::run_while_valid) runs while valid instructions
-//! are decoded.
+//!   are decoded.
 //!
 //! # Saving and loading programs and data
 //!
@@ -159,10 +159,10 @@ impl From<(BlockIndex, BlockOffset)> for ByteAddress {
     }
 }
 
-impl Into<(BlockIndex, BlockOffset)> for ByteAddress {
-    fn into(self) -> (BlockIndex, BlockOffset) {
-        let index = (self.0 >> 16) as u16;
-        let offset = (self.0 & 0xFFFF) as u16;
+impl From<ByteAddress> for (BlockIndex, BlockOffset) {
+    fn from(val: ByteAddress) -> Self {
+        let index = (val.0 >> 16) as u16;
+        let offset = (val.0 & 0xFFFF) as u16;
         (BlockIndex(index), BlockOffset(offset))
     }
 }
@@ -225,9 +225,9 @@ impl From<u32> for WordAddress {
     }
 }
 
-impl Into<(BlockIndex, BlockOffset)> for WordAddress {
-    fn into(self) -> (BlockIndex, BlockOffset) {
-        ByteAddress::from(self).into()
+impl From<WordAddress> for (BlockIndex, BlockOffset) {
+    fn from(val: WordAddress) -> Self {
+        ByteAddress::from(val).into()
     }
 }
 
@@ -265,15 +265,15 @@ impl From<u16> for BlockIndex {
     }
 }
 
-impl Into<u16> for BlockIndex {
-    fn into(self) -> u16 {
-        self.0
+impl From<BlockIndex> for u16 {
+    fn from(val: BlockIndex) -> Self {
+        val.0
     }
 }
 
-impl Into<usize> for BlockIndex {
-    fn into(self) -> usize {
-        self.0 as usize
+impl From<BlockIndex> for usize {
+    fn from(val: BlockIndex) -> Self {
+        val.0 as usize
     }
 }
 
@@ -338,15 +338,15 @@ impl From<u16> for BlockOffset {
     }
 }
 
-impl Into<u16> for BlockOffset {
-    fn into(self) -> u16 {
-        self.0
+impl From<BlockOffset> for u16 {
+    fn from(val: BlockOffset) -> Self {
+        val.0
     }
 }
 
-impl Into<usize> for BlockOffset {
-    fn into(self) -> usize {
-        self.0 as usize
+impl From<BlockOffset> for usize {
+    fn from(val: BlockOffset) -> Self {
+        val.0 as usize
     }
 }
 
@@ -818,9 +818,9 @@ pub type ExecuteResult = Result<(Instruction, InstructionOutcome), InstructionEr
 /// schemes:
 ///
 /// - **Tick-on-read** (default): instructions that load from memory
-/// tick the I/O device they're reading from if appropriate.
+///   tick the I/O device they're reading from if appropriate.
 /// - **Tick manually**: the host is in control of when the I/O devices
-/// are ticked.
+///   are ticked.
 ///
 /// Tick-on-read is configured with [`Vm::set_tick_on_read`].
 ///
@@ -965,7 +965,7 @@ impl Vm {
             indices.push(block_index);
         }
 
-        &mut self.blocks[block_index as usize]
+        &mut self.blocks[block_index]
     }
 
     /// Get a block from the requested byte address,
@@ -1504,6 +1504,12 @@ impl Vm {
     /// memory, according to the [`Image`] format.
     pub fn write_image_to(&self, writer: impl Write) -> io::Result<()> {
         ImageEntries::from(self).write_to(writer)
+    }
+}
+
+impl Default for Vm {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
