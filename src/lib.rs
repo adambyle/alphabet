@@ -105,6 +105,7 @@
 
 pub mod image;
 pub mod is;
+pub mod lang;
 pub mod vm;
 
 pub use image::{Image, ImageBuilder};
