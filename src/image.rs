@@ -16,7 +16,7 @@ use std::{
     borrow::Cow,
     error::Error,
     fmt::Display,
-    io::{self, Read, Write},
+    io::{self, BufReader, Read, Write},
     iter,
 };
 
@@ -97,12 +97,11 @@ impl ImageWritePayload {
             Self::HalfWords(half_words) => {
                 let bytes = half_words
                     .into_iter()
-                    .map(|half_word| half_word.to_be_bytes())
-                    .flatten();
+                    .flat_map(|half_word| half_word.to_be_bytes());
                 vec.extend(bytes);
             }
             Self::Words(words) => {
-                let bytes = words.into_iter().map(|word| word.to_be_bytes()).flatten();
+                let bytes = words.into_iter().flat_map(|word| word.to_be_bytes());
                 vec.extend(bytes);
             }
         }
@@ -441,6 +440,12 @@ impl ImageBuilder {
     }
 }
 
+impl Default for ImageBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// The entry data was invalid.
 #[derive(Debug)]
 pub enum ImageEntryError {
@@ -583,9 +588,9 @@ impl<'a> ImageEntryRef<'a> {
         let end = start + (self.data.len() - 1) as u32;
         let start_bytes = start.to_be_bytes();
         let end_bytes = end.to_be_bytes();
-        writer.write(&start_bytes)?;
-        writer.write(&end_bytes)?;
-        writer.write(&self.data)?;
+        writer.write_all(&start_bytes)?;
+        writer.write_all(&end_bytes)?;
+        writer.write_all(&self.data)?;
         Ok(())
     }
 }
@@ -682,7 +687,7 @@ impl<'a> Iterator for ImageEntries<'a> {
                     });
                 }
             }
-            Self::Entries(entries) => entries.next().map(Into::into),
+            Self::Entries(entries) => entries.next(),
             Self::Bytes(bytes) => loop {
                 let entry = ImageEntry::from_byte_iter(bytes);
                 match entry {
@@ -714,7 +719,8 @@ impl<'a> From<&'a Vm> for ImageEntries<'a> {
 
 impl<'a, R: Read + 'a> From<R> for ImageEntries<'a> {
     fn from(value: R) -> Self {
-        let bytes = value.bytes().filter_map(|b| b.ok());
+        let reader = BufReader::new(value);
+        let bytes = reader.bytes().filter_map(|b| b.ok());
         Self::Bytes(Box::new(bytes))
     }
 }
@@ -814,6 +820,12 @@ impl Image {
     /// Write the contents of an image.
     pub fn write_to(&self, writer: impl Write) -> io::Result<()> {
         self.entries().write_to(writer)
+    }
+}
+
+impl Default for Image {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

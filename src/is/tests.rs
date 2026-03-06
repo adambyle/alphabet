@@ -6,9 +6,9 @@ fn test_operation_encodings<const N: usize>(
 ) {
     for (operation_name, operation, opcode_const, opcode_literal) in operations {
         let parsed_op = Operation::parse(operation_name)
-            .expect(&format!("operation name {operation_name} failed to parse"));
+            .unwrap_or_else(|| panic!("operation name {operation_name} failed to parse"));
         let newed_op = Operation::new(opcode_literal)
-            .expect(&format!("opcode {opcode_literal} should be valid"));
+            .unwrap_or_else(|| panic!("opcode {opcode_literal} should be valid"));
         assert_eq!(parsed_op, operation);
         assert_eq!(newed_op, operation);
         assert_eq!(operation.name(), operation_name);

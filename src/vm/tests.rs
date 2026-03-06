@@ -485,14 +485,13 @@ fn run_program(instructions: &[Instruction]) -> Vm {
     }
     loop {
         let result = vm.execute_and_advance();
-        if let Ok((instruction, _)) = &result {
-            if instruction.operation() == Operation::JMP
-                && instruction
-                    .i_type_payload()
-                    .is_some_and(|p| p.immediate_value() == 0)
-            {
-                break;
-            }
+        if let Ok((instruction, _)) = &result
+            && instruction.operation() == Operation::JMP
+            && instruction
+                .i_type_payload()
+                .is_some_and(|p| p.immediate_value() == 0)
+        {
+            break;
         }
         assert!(
             vm.program_counter().value() < len,

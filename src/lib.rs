@@ -5,13 +5,14 @@
 //!
 //! The Alphabet VM is extremely simplified virtual machine with a dedicated
 //! instruction set, designed to prioritize _flexibility_ and _infallibility_.
+//!
 //! - **Flexibility**: All machine instructions are *self-contained*, meaning
-//! they only manipulate the register values or memory of the virtual machine.
-//! Communication with the host environment is highly customizable through the
-//! creation of memory-mapped I/O controllers.
+//!   they only manipulate the register values or memory of the virtual machine.
+//!   Communication with the host environment is highly customizable through the
+//!   creation of memory-mapped I/O controllers.
 //! - **Infallibility**: The Alphabet VM has no error states--it does not even
-//! have a halt state! Invalid instructions are effectively no-ops, and
-//! invalid reads and writes fail silently (and result in 0 if appropriate).
+//!   have a halt state! Invalid instructions are effectively no-ops, and
+//!   invalid reads and writes fail silently (and result in 0 if appropriate).
 //!
 //! You can read more about the motivation behind the Alphabet VM, as well
 //! as details about Alphabet's instruction set and its behavior, on
@@ -48,46 +49,44 @@
 //! ```
 //! use alphabetvm::{ImageBuilder, Vm, is::inst};
 //!
-//! fn main() {
-//!     const LEN_ADDR: u32 = 0x30;
-//!     const ARRAY_ADDR: u32 = 0x31;
-//!     const R_ARRAY_PTR: usize = 1;
-//!     const R_LEN: usize = 2;
-//!     const R_SUM: usize = 3;
-//!     const R_ARRAY_ELEM: usize = 4;
+//! const LEN_ADDR: u32 = 0x30;
+//! const ARRAY_ADDR: u32 = 0x31;
+//! const R_ARRAY_PTR: usize = 1;
+//! const R_LEN: usize = 2;
+//! const R_SUM: usize = 3;
+//! const R_ARRAY_ELEM: usize = 4;
 //!
-//!     let array = vec![4u8, 7u8, -2i8 as u8];
-//!     let len = array.len() as u8;
+//! let array = vec![4u8, 7u8, -2i8 as u8];
+//! let len = array.len() as u8;
 //!
-//!     // Create a program that reads signed bytes
-//!     // from an array and calculates their sum.
-//!     let instructions = &[
-//!         inst::ldbu(R_LEN, 0, LEN_ADDR as i16),
-//!         inst::addi(R_ARRAY_PTR, 0, ARRAY_ADDR as u16),
-//!         inst::add(R_SUM, 0, 0),
-//!         inst::beq(R_LEN, 0, 6),
-//!         inst::ldb(R_ARRAY_ELEM, R_ARRAY_PTR, 0),
-//!         inst::add(R_SUM, R_SUM, R_ARRAY_ELEM),
-//!         inst::addi(R_ARRAY_PTR, R_ARRAY_PTR, 1),
-//!         inst::subi(R_LEN, R_LEN, 1),
-//!         inst::jmp(0, -5),
-//!         inst::jmp(0, 0),
-//!     ];
-//!     let builder = ImageBuilder::new()
-//!         .write_instructions(instructions)
-//!         .seek(LEN_ADDR.into())
-//!         .write_byte(len)
-//!         .seek(ARRAY_ADDR.into())
-//!         .write_bytes(array);
-//!     let mut vm: Vm = builder.build().expect("failed to build VM");
+//! // Create a program that reads signed bytes
+//! // from an array and calculates their sum.
+//! let instructions = &[
+//!     inst::ldbu(R_LEN, 0, LEN_ADDR as i16),
+//!     inst::addi(R_ARRAY_PTR, 0, ARRAY_ADDR as u16),
+//!     inst::add(R_SUM, 0, 0),
+//!     inst::beq(R_LEN, 0, 6),
+//!     inst::ldb(R_ARRAY_ELEM, R_ARRAY_PTR, 0),
+//!     inst::add(R_SUM, R_SUM, R_ARRAY_ELEM),
+//!     inst::addi(R_ARRAY_PTR, R_ARRAY_PTR, 1),
+//!     inst::subi(R_LEN, R_LEN, 1),
+//!     inst::jmp(0, -5),
+//!     inst::jmp(0, 0),
+//! ];
+//! let builder = ImageBuilder::new()
+//!     .write_instructions(instructions)
+//!     .seek(LEN_ADDR.into())
+//!     .write_byte(len)
+//!     .seek(ARRAY_ADDR.into())
+//!     .write_bytes(array);
+//! let mut vm: Vm = builder.build().expect("failed to build VM");
 //!
-//!     // Execute until the last instruction is reached.
-//!     vm.run_until_loop();
+//! // Execute until the last instruction is reached.
+//! _ = vm.run_until_loop();
 //!
-//!     // Print the sum.
-//!     let sum = vm.register(R_SUM);
-//!     println!("Sum: {sum}");
-//! }
+//! // Print the sum.
+//! let sum = vm.register(R_SUM);
+//! println!("Sum: {sum}");
 //! ```
 //!
 //! Notice that the `ImageBuilder` can be built directly to a [`Vm`] and that
@@ -111,3 +110,5 @@ pub mod vm;
 pub use image::{Image, ImageBuilder};
 pub use is::{Instruction, Operation};
 pub use vm::Vm;
+
+// TODO defaults!
