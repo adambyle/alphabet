@@ -1,3 +1,5 @@
+use alphabetvm::ascii;
+
 fn main() {
-    println!("Hello, world!");
+    let x = ascii!("br\x8fuh");
 }

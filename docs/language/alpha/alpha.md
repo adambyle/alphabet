@@ -54,6 +54,9 @@ The `.org` directive may move the cursor to any valid address.
 All instructions and directives have some syntax rules in common:
 - Whitespace is required between parts of an instruction or directive that
 are not already separated by a symbol (like a comma).
+- Each instruction and directive must be on its own line, but labels may
+appear before instructions or directives on the same line.
+- Space or symbols like `.`, `:`, and `;` delimit tokens.
 - Excess whitespace is allowed before, after, or in the middle of instructions or directives.
 Empty lines are allowed.
 - Registers are formatted like `r#`, where `#` is 0-31. Single-digit register
@@ -78,7 +81,9 @@ signedness than the instruction using it.
 respective digits, and must be prefixed with `0b`, `0o`, or `0x` respectively.
 - Text immediates must be zero, one, or two quoted [ASCII characters](../../ascii.md),
 which are translated to their 16-bit representation. Single characters fill the lower byte.
-Omitted characters are zeroed.
+Omitted characters are zeroed. The string may be single- or double-quoted, and either
+quote type may be escaped inside the quote (`\'` or `\"`). Text immediates may not contain
+newlines unless escaped (`\n`).
 
 32-bit and 8-bit immediate values, which are allowed in some directives,
 also have the above rules apply, except that the valid range for
@@ -145,7 +150,7 @@ valid directives.
 
 |Directive|Behavior
 |-|-
-|`.equ <symbol>, <value>`|Declare the string of characters `symbol` to alias the specified immediate value (up to 32-bits). The symbol is valid wherever the aliased value would be a valid immediate value as an argument to an instruction or directive. `symbol` must consist only of alphanumeric characters and may not start with a digit. It is an error to declare the same symbol twice.
+|`.equ <symbol>, <value>`|Declare the string of characters `symbol` to alias the specified immediate value (up to 16 bits). The symbol is valid as an immediate value in an instruction. `symbol` must consist only of alphanumeric characters and may not start with a digit. It is an error to declare the same symbol twice.
 |`.org <address>`|Move the cursor to `address`, which must be a 32-bit unsigned immediate value.
 |`.word <value>`|Write the provided 32-bit immediate value at the cursor.
 |`.half <value>`|Write the provided 16-bit immediate value at the cursor.
@@ -157,18 +162,19 @@ valid directives.
 
 Labels have separate syntax from other directives. They consist only of
 a custom alphanumeric symbol (following the same rules as `.equ` symbols),
-followed by a `:` symbol. A label symbol and a `.equ` symbol may not have
-the same name.
+followed by a `:` symbol. Labels and `.equ` symbols have separate
+namespaces and so may share names.
 
 Labels assign the value of the cursor at their location to the named symbol.
-The label does not move the cursor. The symbol may be used in place of a 32-bit
-immediate in instructions and directives.
+The label does not move the cursor.
 
 Label symbols may also be used in `jmp`, `beq`, and `bne` instructions
 in place of the offset. In these cases, the assembler substitutes
 the offset of the label from the cursor at that instruction.
 It is an error for this calculated offset to be out of the valid
-16-bit-immediate range.
+16-bit-immediate range. In these 3 instructions, if a name is used
+that refers to both a symbol and a label, the label is always chosen,
+if it results in an out-of-range jump.
 
 An example:
 
