@@ -16,7 +16,7 @@ use std::{
     borrow::Cow,
     error::Error,
     fmt::Display,
-    io::{self, Read, Write},
+    io::{self, BufReader, Read, Write},
     iter,
 };
 
@@ -719,7 +719,8 @@ impl<'a> From<&'a Vm> for ImageEntries<'a> {
 
 impl<'a, R: Read + 'a> From<R> for ImageEntries<'a> {
     fn from(value: R) -> Self {
-        let bytes = value.bytes().filter_map(|b| b.ok());
+        let reader = BufReader::new(value);
+        let bytes = reader.bytes().filter_map(|b| b.ok());
         Self::Bytes(Box::new(bytes))
     }
 }

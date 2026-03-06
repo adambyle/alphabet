@@ -34,7 +34,7 @@ fn main() {
     let mut vm: Vm = builder.build().expect("failed to build VM");
 
     // Execute until the last instruction is reached.
-    _ = vm.run_until_loop();
+    vm.run_until_loop();
 
     // Print the sum.
     let sum = vm.register(R_SUM);
