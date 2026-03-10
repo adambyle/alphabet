@@ -15,64 +15,52 @@ use std::{
 macro_rules! ascii {
     ($s:expr) => {{
         const _: () = assert!($s.is_ascii(), "string is not valid ASCII");
-        <&$crate::lang::ascii::AsciiStr>::try_from($s).unwrap()
+        unsafe { &*($s as *const str as *const AsciiStr) }
     }};
 }
 
-/// Byte slice guaranteed to make up a valid
-/// ASCII string.s
 #[repr(transparent)]
-#[derive(Debug, PartialEq, Eq)]
-pub struct AsciiStr([u8]);
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// A transparent wrapper around [`u8`] the guarantees it is a valid
+/// ASCII byte.
+pub struct AsciiByte(u8);
 
-impl AsciiStr {
-    /// The length of the string.
-    pub fn len(&self) -> usize {
-        self.0.len()
-    }
-
-    /// Whether the string is empty.
-    pub fn is_empty(&self) -> bool {
-        self.0.is_empty()
-    }
-
-    /// Returns an iterator over each character (byte)
-    /// in the ASCII string.
-    pub fn chars(&self) -> impl Iterator<Item = u8> {
-        self.0.iter().cloned()
-    }
-
-    /// Whether all the letters in the string are uppercase.
-    pub fn is_uppercase(&self) -> bool {
-        self.0.iter().all(|c| c.is_ascii_uppercase())
-    }
-
-    /// Make the string uppercase in place.
-    pub fn uppercase(&mut self) {
-        for b in &mut self.0 {
-            if b.is_ascii_lowercase() {
-                *b = b.to_ascii_uppercase();
-            }
-        }
-    }
-
-    /// Make the string lowercase in place.
-    pub fn lowercase(&mut self) {
-        for b in &mut self.0 {
-            if b.is_ascii_uppercase() {
-                *b = b.to_ascii_lowercase();
-            }
-        }
-    }
-
-    /// Whether all the letters in the string are uppercase.
-    pub fn is_lowercase(&self) -> bool {
-        self.0.iter().all(|c| c.is_ascii_lowercase())
+impl AsciiByte {
+    /// The wrapped byte value.
+    pub fn byte(self) -> u8 {
+        self.0
     }
 }
 
+impl TryFrom<u8> for AsciiByte {
+    type Error = ();
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        if value.is_ascii() {
+            Ok(AsciiByte(value))
+        } else {
+            Err(())
+        }
+    }
+}
+
+impl From<AsciiByte> for u8 {
+    fn from(value: AsciiByte) -> Self {
+        value.0
+    }
+}
+
+/// Byte slice guaranteed to make up a valid
+/// ASCII string.
+///
+/// This type's API is minimal; it is mostly designed
+/// for consumption by a lexer. See [`AsciiStr::char_locations`].
+#[repr(transparent)]
+#[derive(Debug, PartialEq, Eq)]
+pub struct AsciiStr([AsciiByte]);
+
 impl Index<usize> for AsciiStr {
-    type Output = u8;
+    type Output = AsciiByte;
 
     fn index(&self, index: usize) -> &Self::Output {
         &self.0[index]
@@ -89,25 +77,49 @@ impl Index<Range<usize>> for AsciiStr {
     type Output = AsciiStr;
 
     fn index(&self, index: Range<usize>) -> &Self::Output {
-        TryFrom::try_from(&self.0[index]).unwrap()
+        self.0[index].into()
     }
 }
 
 impl IndexMut<Range<usize>> for AsciiStr {
     fn index_mut(&mut self, index: Range<usize>) -> &mut Self::Output {
-        TryFrom::try_from(&mut self.0[index]).unwrap()
+        (&mut self.0[index]).into()
+    }
+}
+
+impl AsRef<[AsciiByte]> for AsciiStr {
+    fn as_ref(&self) -> &[AsciiByte] {
+        &self.0
+    }
+}
+
+impl AsMut<[AsciiByte]> for AsciiStr {
+    fn as_mut(&mut self) -> &mut [AsciiByte] {
+        &mut self.0
     }
 }
 
 impl AsRef<[u8]> for AsciiStr {
     fn as_ref(&self) -> &[u8] {
-        &self.0
+        unsafe { &*(&self.0 as *const [AsciiByte] as *const [u8]) }
     }
 }
 
 impl AsRef<str> for AsciiStr {
     fn as_ref(&self) -> &str {
-        unsafe { std::str::from_utf8_unchecked(&self.0) }
+        unsafe { std::str::from_utf8_unchecked(self.as_ref()) }
+    }
+}
+
+impl From<&[AsciiByte]> for &AsciiStr {
+    fn from(value: &[AsciiByte]) -> Self {
+        unsafe { &*(value as *const [AsciiByte] as *const AsciiStr) }
+    }
+}
+
+impl From<&mut [AsciiByte]> for &mut AsciiStr {
+    fn from(value: &mut [AsciiByte]) -> Self {
+        unsafe { &mut *(value as *mut [AsciiByte] as *mut AsciiStr) }
     }
 }
 
@@ -116,7 +128,7 @@ impl TryFrom<&[u8]> for &AsciiStr {
 
     fn try_from(value: &[u8]) -> Result<Self, Self::Error> {
         if value.is_ascii() {
-            Ok(unsafe { &*(&value[..] as *const [u8] as *const AsciiStr) })
+            Ok(unsafe { &*(value as *const [u8] as *const AsciiStr) })
         } else {
             Err(value.iter().cloned().find(|b| !b.is_ascii()).unwrap())
         }
@@ -169,12 +181,17 @@ impl ToOwned for AsciiStr {
 
 /// Owned ASCII string.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AsciiString(Vec<u8>);
+pub struct AsciiString(Vec<AsciiByte>);
 
-impl AsciiString {
-    /// Create a reference-counted slice out of the string.
-    pub fn into_slice(self) -> AsciiSlice {
-        self.into()
+impl From<Vec<AsciiByte>> for AsciiString {
+    fn from(value: Vec<AsciiByte>) -> Self {
+        AsciiString(value)
+    }
+}
+
+impl FromIterator<AsciiByte> for AsciiString {
+    fn from_iter<T: IntoIterator<Item = AsciiByte>>(iter: T) -> Self {
+        AsciiString(iter.into_iter().collect())
     }
 }
 
@@ -183,7 +200,9 @@ impl TryFrom<Vec<u8>> for AsciiString {
 
     fn try_from(value: Vec<u8>) -> Result<Self, Self::Error> {
         if value.is_ascii() {
-            Ok(Self(value))
+            Ok(Self(unsafe {
+                std::mem::transmute::<Vec<u8>, Vec<AsciiByte>>(value)
+            }))
         } else {
             Err(value.into_iter().find(|b| !b.is_ascii()).unwrap())
         }
@@ -195,7 +214,9 @@ impl TryFrom<String> for AsciiString {
 
     fn try_from(value: String) -> Result<Self, Self::Error> {
         if value.is_ascii() {
-            Ok(Self(value.into_bytes()))
+            Ok(Self(unsafe {
+                std::mem::transmute::<Vec<u8>, Vec<AsciiByte>>(value.into_bytes())
+            }))
         } else {
             Err(value.chars().find(|c| !c.is_ascii()).unwrap())
         }
@@ -206,13 +227,13 @@ impl Deref for AsciiString {
     type Target = AsciiStr;
 
     fn deref(&self) -> &Self::Target {
-        TryFrom::try_from(&self.0[..]).unwrap()
+        self.0.as_slice().into()
     }
 }
 
 impl DerefMut for AsciiString {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        TryFrom::try_from(&mut self.0[..]).unwrap()
+        self.0.as_mut_slice().into()
     }
 }
 
@@ -240,7 +261,7 @@ impl From<AsciiString> for AsciiSlice {
     fn from(value: AsciiString) -> Self {
         AsciiSlice {
             start: 0,
-            end: value.len(),
+            end: value.0.len(),
             source: Rc::new(value),
         }
     }
@@ -269,8 +290,44 @@ impl Deref for AsciiSlice {
 
 impl PartialEq for AsciiSlice {
     fn eq(&self, other: &Self) -> bool {
-        self.source.as_ref() == other.source.as_ref()
+        **self == **other
     }
 }
 
 impl Eq for AsciiSlice {}
+
+#[derive(Debug, Clone)]
+/// A shared or borrowed reference to an ASCII string.
+pub enum AsciiRef<'a> {
+    /// The reference is a slice into some multiple-owned ASCII.
+    Shared(AsciiSlice),
+    /// The reference is a slice into some ASCII.
+    Borrowed(&'a AsciiStr),
+}
+
+impl AsciiRef<'_> {
+    /// Create a slice of the ASCII string.
+    pub fn slice(&self, range: Range<usize>) -> Self {
+        match self {
+            Self::Shared(shared_slice) => Self::Shared(shared_slice.slice(range)),
+            Self::Borrowed(string) => Self::Borrowed(&string[range]),
+        }
+    }
+}
+
+impl Deref for AsciiRef<'_> {
+    type Target = AsciiStr;
+
+    fn deref(&self) -> &Self::Target {
+        match self {
+            AsciiRef::Shared(shared_slice) => shared_slice,
+            AsciiRef::Borrowed(string) => string,
+        }
+    }
+}
+
+impl PartialEq for AsciiRef<'_> {
+    fn eq(&self, other: &Self) -> bool {
+        **self == **other
+    }
+}

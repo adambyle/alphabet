@@ -5,7 +5,7 @@
 pub mod alpha;
 pub mod ascii;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
 /// A location in a unit of source.
 pub struct SourceLocation {
     /// The line (or row) of source.
@@ -17,11 +17,6 @@ pub struct SourceLocation {
 impl SourceLocation {
     /// The beginning of source.
     pub const ZERO: Self = SourceLocation { line: 0, column: 0 };
-
-    /// Move the column forward by 1.
-    pub fn advance(&mut self) {
-        self.column += 1;
-    }
 
     /// Move the line down by 1 and reset the column.
     pub fn newline(&mut self) {
