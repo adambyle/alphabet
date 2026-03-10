@@ -2,6 +2,8 @@
 //!
 //! This module has common language features.
 
+use crate::lang::ascii::AsciiChar;
+
 pub mod alpha;
 pub mod ascii;
 
@@ -18,9 +20,24 @@ impl SourceLocation {
     /// The beginning of source.
     pub const ZERO: Self = SourceLocation { line: 0, column: 0 };
 
-    /// Move the line down by 1 and reset the column.
-    pub fn newline(&mut self) {
-        self.line += 1;
-        self.column = 0;
+    /// Return the location at the next line.
+    pub fn newline(self) -> Self {
+        SourceLocation {
+            line: self.line + 1,
+            column: 0,
+        }
+    }
+
+    /// The next location following the character
+    /// at this location (handles newlines).
+    pub fn after_char(self, char: AsciiChar) -> Self {
+        if char.byte() == b'\n' {
+            self.newline()
+        } else {
+            SourceLocation {
+                column: self.column + 1,
+                ..self
+            }
+        }
     }
 }

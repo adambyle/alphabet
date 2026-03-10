@@ -2,9 +2,14 @@
 
 use std::{
     borrow::{Borrow, BorrowMut},
+    iter::{self, Peekable},
+    mem,
     ops::{Deref, DerefMut, Index, IndexMut, Range},
     rc::Rc,
+    slice, str, vec,
 };
+
+use crate::lang::SourceLocation;
 
 #[macro_export]
 /// Convenience macro for ASCII string literals.
@@ -23,29 +28,29 @@ macro_rules! ascii {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 /// A transparent wrapper around [`u8`] the guarantees it is a valid
 /// ASCII byte.
-pub struct AsciiByte(u8);
+pub struct AsciiChar(u8);
 
-impl AsciiByte {
+impl AsciiChar {
     /// The wrapped byte value.
     pub fn byte(self) -> u8 {
         self.0
     }
 }
 
-impl TryFrom<u8> for AsciiByte {
+impl TryFrom<u8> for AsciiChar {
     type Error = ();
 
     fn try_from(value: u8) -> Result<Self, Self::Error> {
         if value.is_ascii() {
-            Ok(AsciiByte(value))
+            Ok(AsciiChar(value))
         } else {
             Err(())
         }
     }
 }
 
-impl From<AsciiByte> for u8 {
-    fn from(value: AsciiByte) -> Self {
+impl From<AsciiChar> for u8 {
+    fn from(value: AsciiChar) -> Self {
         value.0
     }
 }
@@ -57,10 +62,17 @@ impl From<AsciiByte> for u8 {
 /// for consumption by a lexer. See [`AsciiStr::char_locations`].
 #[repr(transparent)]
 #[derive(Debug, PartialEq, Eq)]
-pub struct AsciiStr([AsciiByte]);
+pub struct AsciiStr([AsciiChar]);
+
+impl AsciiStr {
+    /// Return an iterator over the ASCII characters in the string slice.
+    pub fn chars(&self) -> <&Self as IntoIterator>::IntoIter {
+        self.into_iter()
+    }
+}
 
 impl Index<usize> for AsciiStr {
-    type Output = AsciiByte;
+    type Output = AsciiChar;
 
     fn index(&self, index: usize) -> &Self::Output {
         &self.0[index]
@@ -87,39 +99,39 @@ impl IndexMut<Range<usize>> for AsciiStr {
     }
 }
 
-impl AsRef<[AsciiByte]> for AsciiStr {
-    fn as_ref(&self) -> &[AsciiByte] {
+impl AsRef<[AsciiChar]> for AsciiStr {
+    fn as_ref(&self) -> &[AsciiChar] {
         &self.0
     }
 }
 
-impl AsMut<[AsciiByte]> for AsciiStr {
-    fn as_mut(&mut self) -> &mut [AsciiByte] {
+impl AsMut<[AsciiChar]> for AsciiStr {
+    fn as_mut(&mut self) -> &mut [AsciiChar] {
         &mut self.0
     }
 }
 
 impl AsRef<[u8]> for AsciiStr {
     fn as_ref(&self) -> &[u8] {
-        unsafe { &*(&self.0 as *const [AsciiByte] as *const [u8]) }
+        unsafe { &*(&self.0 as *const [AsciiChar] as *const [u8]) }
     }
 }
 
 impl AsRef<str> for AsciiStr {
     fn as_ref(&self) -> &str {
-        unsafe { std::str::from_utf8_unchecked(self.as_ref()) }
+        unsafe { str::from_utf8_unchecked(self.as_ref()) }
     }
 }
 
-impl From<&[AsciiByte]> for &AsciiStr {
-    fn from(value: &[AsciiByte]) -> Self {
-        unsafe { &*(value as *const [AsciiByte] as *const AsciiStr) }
+impl From<&[AsciiChar]> for &AsciiStr {
+    fn from(value: &[AsciiChar]) -> Self {
+        unsafe { &*(value as *const [AsciiChar] as *const AsciiStr) }
     }
 }
 
-impl From<&mut [AsciiByte]> for &mut AsciiStr {
-    fn from(value: &mut [AsciiByte]) -> Self {
-        unsafe { &mut *(value as *mut [AsciiByte] as *mut AsciiStr) }
+impl From<&mut [AsciiChar]> for &mut AsciiStr {
+    fn from(value: &mut [AsciiChar]) -> Self {
+        unsafe { &mut *(value as *mut [AsciiChar] as *mut AsciiStr) }
     }
 }
 
@@ -179,18 +191,45 @@ impl ToOwned for AsciiStr {
     }
 }
 
-/// Owned ASCII string.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AsciiString(Vec<AsciiByte>);
+impl<'a> IntoIterator for &'a AsciiStr {
+    type Item = AsciiChar;
+    type IntoIter = iter::Cloned<slice::Iter<'a, AsciiChar>>;
 
-impl From<Vec<AsciiByte>> for AsciiString {
-    fn from(value: Vec<AsciiByte>) -> Self {
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.iter().cloned()
+    }
+}
+
+/// Owned ASCII string.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct AsciiString(Vec<AsciiChar>);
+
+impl AsciiString {
+    /// Create a new empty string.
+    pub fn new() -> Self {
+        AsciiString(Vec::new())
+    }
+
+    /// Push a character onto the end of the string.
+    pub fn push_char(&mut self, char: AsciiChar) {
+        self.0.push(char);
+    }
+
+    /// Return an iterator over the ASCII characters in the string,
+    /// consuming the string.
+    pub fn into_chars(self) -> <Self as IntoIterator>::IntoIter {
+        self.into_iter()
+    }
+}
+
+impl From<Vec<AsciiChar>> for AsciiString {
+    fn from(value: Vec<AsciiChar>) -> Self {
         AsciiString(value)
     }
 }
 
-impl FromIterator<AsciiByte> for AsciiString {
-    fn from_iter<T: IntoIterator<Item = AsciiByte>>(iter: T) -> Self {
+impl FromIterator<AsciiChar> for AsciiString {
+    fn from_iter<T: IntoIterator<Item = AsciiChar>>(iter: T) -> Self {
         AsciiString(iter.into_iter().collect())
     }
 }
@@ -201,7 +240,7 @@ impl TryFrom<Vec<u8>> for AsciiString {
     fn try_from(value: Vec<u8>) -> Result<Self, Self::Error> {
         if value.is_ascii() {
             Ok(Self(unsafe {
-                std::mem::transmute::<Vec<u8>, Vec<AsciiByte>>(value)
+                mem::transmute::<Vec<u8>, Vec<AsciiChar>>(value)
             }))
         } else {
             Err(value.into_iter().find(|b| !b.is_ascii()).unwrap())
@@ -215,7 +254,7 @@ impl TryFrom<String> for AsciiString {
     fn try_from(value: String) -> Result<Self, Self::Error> {
         if value.is_ascii() {
             Ok(Self(unsafe {
-                std::mem::transmute::<Vec<u8>, Vec<AsciiByte>>(value.into_bytes())
+                mem::transmute::<Vec<u8>, Vec<AsciiChar>>(value.into_bytes())
             }))
         } else {
             Err(value.chars().find(|c| !c.is_ascii()).unwrap())
@@ -249,6 +288,15 @@ impl BorrowMut<AsciiStr> for AsciiString {
     }
 }
 
+impl IntoIterator for AsciiString {
+    type Item = AsciiChar;
+    type IntoIter = vec::IntoIter<AsciiChar>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.into_iter()
+    }
+}
+
 /// A reference-counted slice of an owned ASCII string.
 #[derive(Debug, Clone)]
 pub struct AsciiSlice {
@@ -278,6 +326,11 @@ impl AsciiSlice {
             end,
         }
     }
+
+    /// Return an iterator over the ASCII characters in the string slice.
+    pub fn into_chars(self) -> <Self as IntoIterator>::IntoIter {
+        self.into_iter()
+    }
 }
 
 impl Deref for AsciiSlice {
@@ -296,6 +349,38 @@ impl PartialEq for AsciiSlice {
 
 impl Eq for AsciiSlice {}
 
+impl IntoIterator for AsciiSlice {
+    type IntoIter = AsciiSliceIntoIter;
+    type Item = AsciiChar;
+
+    fn into_iter(self) -> Self::IntoIter {
+        AsciiSliceIntoIter {
+            index: self.start,
+            slice: self,
+        }
+    }
+}
+
+/// An iterator over the characters in an ASCII
+/// string slice.
+pub struct AsciiSliceIntoIter {
+    slice: AsciiSlice,
+    index: usize,
+}
+
+impl Iterator for AsciiSliceIntoIter {
+    type Item = AsciiChar;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.index >= self.slice.end {
+            return None;
+        }
+        let char = self.slice[self.index];
+        self.index += 1;
+        Some(char)
+    }
+}
+
 #[derive(Debug, Clone)]
 /// A shared or borrowed reference to an ASCII string.
 pub enum AsciiRef<'a> {
@@ -305,6 +390,18 @@ pub enum AsciiRef<'a> {
     Borrowed(&'a AsciiStr),
 }
 
+impl From<AsciiSlice> for AsciiRef<'static> {
+    fn from(value: AsciiSlice) -> Self {
+        Self::Shared(value)
+    }
+}
+
+impl<'a> From<&'a AsciiStr> for AsciiRef<'a> {
+    fn from(value: &'a AsciiStr) -> Self {
+        Self::Borrowed(value)
+    }
+}
+
 impl AsciiRef<'_> {
     /// Create a slice of the ASCII string.
     pub fn slice(&self, range: Range<usize>) -> Self {
@@ -312,6 +409,11 @@ impl AsciiRef<'_> {
             Self::Shared(shared_slice) => Self::Shared(shared_slice.slice(range)),
             Self::Borrowed(string) => Self::Borrowed(&string[range]),
         }
+    }
+
+    /// Return an iterator over the ASCII characters in a string.
+    pub fn into_chars(self) -> <Self as IntoIterator>::IntoIter {
+        self.into_iter()
     }
 }
 
@@ -329,5 +431,186 @@ impl Deref for AsciiRef<'_> {
 impl PartialEq for AsciiRef<'_> {
     fn eq(&self, other: &Self) -> bool {
         **self == **other
+    }
+}
+
+impl Eq for AsciiRef<'_> {}
+
+impl<'a> IntoIterator for AsciiRef<'a> {
+    type IntoIter = AsciiRefIntoIter<'a>;
+    type Item = AsciiChar;
+
+    fn into_iter(self) -> Self::IntoIter {
+        match self {
+            Self::Shared(shared_slice) => AsciiRefIntoIter::Shared(shared_slice.into_iter()),
+            Self::Borrowed(string) => AsciiRefIntoIter::Borrowed(string.into_iter()),
+        }
+    }
+}
+
+/// An iterator over the characters in an ASCII string.
+pub enum AsciiRefIntoIter<'a> {
+    /// An iterator over a shared string slice.
+    Shared(<AsciiSlice as IntoIterator>::IntoIter),
+    /// An iterator over a borrowed string slice.
+    Borrowed(<&'a AsciiStr as IntoIterator>::IntoIter),
+}
+
+impl Iterator for AsciiRefIntoIter<'_> {
+    type Item = AsciiChar;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self {
+            Self::Shared(iter) => iter.next(),
+            Self::Borrowed(iter) => iter.next(),
+        }
+    }
+}
+
+/// An iterator over the ASCII characters in a source,
+/// including the line and column of each character.
+pub struct CharLocations<I> {
+    chars: I,
+    location: SourceLocation,
+}
+
+impl<I> CharLocations<I> {
+    /// Set the current source location of the iterator.
+    pub fn with_location(mut self, location: SourceLocation) -> Self {
+        self.location = location;
+        self
+    }
+}
+
+impl<I: IntoIterator<Item = AsciiChar>> From<I> for CharLocations<I::IntoIter> {
+    fn from(value: I) -> Self {
+        CharLocations {
+            chars: value.into_iter(),
+            location: SourceLocation::ZERO,
+        }
+    }
+}
+
+impl<I: Iterator<Item = AsciiChar>> Iterator for CharLocations<I> {
+    type Item = (SourceLocation, AsciiChar);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let char = self.chars.next()?;
+        let location = self.location;
+        self.location = self.location.after_char(char);
+        Some((location, char))
+    }
+}
+
+/// The source text used for segmentation.
+enum SegmenterSource<'a> {
+    /// Backed by an `AsciiRef` — supports zero-cost slicing by index.
+    /// Covers `&AsciiStr`, `AsciiSlice`, and `AsciiRef` uniformly.
+    Indexed {
+        source: AsciiRef<'a>,
+        start: usize,
+        current: usize,
+    },
+    /// Backed by a raw character stream — characters are accumulated
+    /// into an `AsciiString` and wrapped into an `AsciiRef::Shared` on cut.
+    Streaming { accumulated: AsciiString },
+}
+
+/// An iterator adapter that walks a character stream and allows the caller
+/// to cut segments out of it as [`AsciiRef`]s with their source locations.
+pub struct Segmenter<'a, I: Iterator<Item = AsciiChar>> {
+    source: SegmenterSource<'a>,
+    chars: Peekable<CharLocations<I>>,
+    segment_start: SourceLocation,
+    next_location: SourceLocation,
+}
+
+impl<'a> Segmenter<'a, <AsciiRef<'a> as IntoIterator>::IntoIter> {
+    /// Segment a shared or borrowed string slice.
+    pub fn segment_str(source: AsciiRef<'a>) -> Self {
+        Segmenter {
+            source: SegmenterSource::Indexed {
+                source: source.clone(),
+                start: 0,
+                current: 0,
+            },
+            chars: CharLocations::from(source.into_iter()).peekable(),
+            next_location: SourceLocation::ZERO,
+            segment_start: SourceLocation::ZERO,
+        }
+    }
+}
+
+impl<I: Iterator<Item = AsciiChar>> Segmenter<'static, I> {
+    /// Segment a consumed stream of characters.
+    pub fn segment_chars(source: I) -> Self {
+        Segmenter {
+            source: SegmenterSource::Streaming {
+                accumulated: AsciiString::new(),
+            },
+            chars: CharLocations::from(source).peekable(),
+            next_location: SourceLocation::ZERO,
+            segment_start: SourceLocation::ZERO,
+        }
+    }
+}
+
+impl Segmenter<'static, <AsciiString as IntoIterator>::IntoIter> {
+    /// Segment a string, consuming its characters.
+    pub fn segment_string(source: AsciiString) -> Self {
+        Self::segment_chars(source.into_iter())
+    }
+}
+
+impl<'a, I: Iterator<Item = AsciiChar>> Segmenter<'a, I> {
+    /// Peek at the next character.
+    pub fn peek(&mut self) -> Option<(SourceLocation, AsciiChar)> {
+        self.chars.peek().cloned()
+    }
+
+    /// Take the next character.
+    pub fn take(&mut self) -> Option<(SourceLocation, AsciiChar)> {
+        let next @ (location, ch) = self.chars.next()?;
+        self.next_location = location.after_char(ch);
+        match self.source {
+            SegmenterSource::Indexed {
+                ref mut current, ..
+            } => {
+                *current += 1;
+            }
+            SegmenterSource::Streaming {
+                ref mut accumulated,
+            } => {
+                accumulated.0.push(ch);
+            }
+        }
+        Some(next)
+    }
+
+    /// Cut the current segment, returning the accumulated text as an
+    /// [`AsciiRef`] and the [`SourceLocation`] of the segment's start.
+    /// Resets the segment start to the next character's location.
+    pub fn cut(&mut self) -> (AsciiRef<'a>, SourceLocation) {
+        let segment_location = self.segment_start;
+        let segment_text = match self.source {
+            SegmenterSource::Indexed {
+                ref source,
+                ref mut start,
+                current,
+            } => {
+                let segment = source.slice(*start..current);
+                *start = current;
+                segment
+            }
+            SegmenterSource::Streaming {
+                ref mut accumulated,
+            } => {
+                let segment = mem::replace(accumulated, AsciiString::new());
+                AsciiRef::Shared(AsciiSlice::from(segment))
+            }
+        };
+        // Start of the next segment.
+        self.segment_start = self.next_location;
+        (segment_text, segment_location)
     }
 }
