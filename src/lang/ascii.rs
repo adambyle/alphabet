@@ -4,7 +4,7 @@ use std::{
     borrow::{Borrow, BorrowMut},
     iter::{self, Peekable},
     mem,
-    ops::{Deref, DerefMut, Index, IndexMut, Range},
+    ops::{Deref, DerefMut, Index, IndexMut, Range, RangeFrom, RangeFull, RangeTo},
     rc::Rc,
     slice, str, vec,
 };
@@ -19,6 +19,7 @@ use crate::lang::SourceLocation;
 /// it converts the argument to [`&AsciiStr`](AsciiStr).
 macro_rules! ascii {
     ($s:expr) => {{
+        use $crate::lang::ascii::AsciiStr;
         const _: () = assert!($s.is_ascii(), "string is not valid ASCII");
         unsafe { &*($s as *const str as *const AsciiStr) }
     }};
@@ -32,7 +33,7 @@ pub struct AsciiChar(u8);
 
 impl AsciiChar {
     /// The wrapped byte value.
-    pub fn byte(self) -> u8 {
+    pub const fn byte(self) -> u8 {
         self.0
     }
 }
@@ -93,8 +94,50 @@ impl Index<Range<usize>> for AsciiStr {
     }
 }
 
+impl Index<RangeFrom<usize>> for AsciiStr {
+    type Output = AsciiStr;
+
+    fn index(&self, index: RangeFrom<usize>) -> &Self::Output {
+        self.0[index].into()
+    }
+}
+
+impl Index<RangeTo<usize>> for AsciiStr {
+    type Output = AsciiStr;
+
+    fn index(&self, index: RangeTo<usize>) -> &Self::Output {
+        self.0[index].into()
+    }
+}
+
+impl Index<RangeFull> for AsciiStr {
+    type Output = AsciiStr;
+
+    fn index(&self, index: RangeFull) -> &Self::Output {
+        self.0[index].into()
+    }
+}
+
 impl IndexMut<Range<usize>> for AsciiStr {
     fn index_mut(&mut self, index: Range<usize>) -> &mut Self::Output {
+        (&mut self.0[index]).into()
+    }
+}
+
+impl IndexMut<RangeFrom<usize>> for AsciiStr {
+    fn index_mut(&mut self, index: RangeFrom<usize>) -> &mut Self::Output {
+        (&mut self.0[index]).into()
+    }
+}
+
+impl IndexMut<RangeTo<usize>> for AsciiStr {
+    fn index_mut(&mut self, index: RangeTo<usize>) -> &mut Self::Output {
+        (&mut self.0[index]).into()
+    }
+}
+
+impl IndexMut<RangeFull> for AsciiStr {
+    fn index_mut(&mut self, index: RangeFull) -> &mut Self::Output {
         (&mut self.0[index]).into()
     }
 }
@@ -211,8 +254,8 @@ impl AsciiString {
     }
 
     /// Push a character onto the end of the string.
-    pub fn push_char(&mut self, char: AsciiChar) {
-        self.0.push(char);
+    pub fn push_char(&mut self, ch: AsciiChar) {
+        self.0.push(ch);
     }
 
     /// Return an iterator over the ASCII characters in the string,
@@ -327,6 +370,26 @@ impl AsciiSlice {
         }
     }
 
+    /// Create a slice of the ASCII string.
+    pub fn slice_from(&self, start: usize) -> AsciiSlice {
+        let start = (self.start + start).min(self.end);
+        AsciiSlice {
+            source: Rc::clone(&self.source),
+            start,
+            end: self.end,
+        }
+    }
+
+    /// Create a slice of the ASCII string.
+    pub fn slice_to(&self, end: usize) -> AsciiSlice {
+        let end = (self.start + end).min(self.end);
+        AsciiSlice {
+            source: Rc::clone(&self.source),
+            start: self.start,
+            end,
+        }
+    }
+
     /// Return an iterator over the ASCII characters in the string slice.
     pub fn into_chars(self) -> <Self as IntoIterator>::IntoIter {
         self.into_iter()
@@ -396,6 +459,12 @@ impl From<AsciiSlice> for AsciiRef<'static> {
     }
 }
 
+impl From<AsciiString> for AsciiRef<'static> {
+    fn from(value: AsciiString) -> Self {
+        Self::Shared(value.into())
+    }
+}
+
 impl<'a> From<&'a AsciiStr> for AsciiRef<'a> {
     fn from(value: &'a AsciiStr) -> Self {
         Self::Borrowed(value)
@@ -408,6 +477,22 @@ impl AsciiRef<'_> {
         match self {
             Self::Shared(shared_slice) => Self::Shared(shared_slice.slice(range)),
             Self::Borrowed(string) => Self::Borrowed(&string[range]),
+        }
+    }
+
+    /// Create a slice of the ASCII string.
+    pub fn slice_from(&self, start: usize) -> Self {
+        match self {
+            Self::Shared(shared_slice) => Self::Shared(shared_slice.slice_from(start)),
+            Self::Borrowed(string) => Self::Borrowed(&string[start..]),
+        }
+    }
+
+    /// Create a slice of the ASCII string.
+    pub fn slice_to(&self, end: usize) -> Self {
+        match self {
+            Self::Shared(shared_slice) => Self::Shared(shared_slice.slice_to(end)),
+            Self::Borrowed(string) => Self::Borrowed(&string[..end]),
         }
     }
 
@@ -527,7 +612,8 @@ pub struct Segmenter<'a, I: Iterator<Item = AsciiChar>> {
 
 impl<'a> Segmenter<'a, <AsciiRef<'a> as IntoIterator>::IntoIter> {
     /// Segment a shared or borrowed string slice.
-    pub fn segment_str(source: AsciiRef<'a>) -> Self {
+    pub fn segment_str<T: Into<AsciiRef<'a>>>(source: T) -> Self {
+        let source = source.into();
         Segmenter {
             source: SegmenterSource::Indexed {
                 source: source.clone(),
@@ -543,7 +629,8 @@ impl<'a> Segmenter<'a, <AsciiRef<'a> as IntoIterator>::IntoIter> {
 
 impl<I: Iterator<Item = AsciiChar>> Segmenter<'static, I> {
     /// Segment a consumed stream of characters.
-    pub fn segment_chars(source: I) -> Self {
+    pub fn segment_chars<T: IntoIterator<IntoIter = I>>(source: T) -> Self {
+        let source = source.into_iter();
         Segmenter {
             source: SegmenterSource::Streaming {
                 accumulated: AsciiString::new(),
@@ -555,21 +642,10 @@ impl<I: Iterator<Item = AsciiChar>> Segmenter<'static, I> {
     }
 }
 
-impl Segmenter<'static, <AsciiString as IntoIterator>::IntoIter> {
-    /// Segment a string, consuming its characters.
-    pub fn segment_string(source: AsciiString) -> Self {
-        Self::segment_chars(source.into_iter())
-    }
-}
+impl<'a, I: Iterator<Item = AsciiChar>> Iterator for Segmenter<'a, I> {
+    type Item = (SourceLocation, AsciiChar);
 
-impl<'a, I: Iterator<Item = AsciiChar>> Segmenter<'a, I> {
-    /// Peek at the next character.
-    pub fn peek(&mut self) -> Option<(SourceLocation, AsciiChar)> {
-        self.chars.peek().cloned()
-    }
-
-    /// Take the next character.
-    pub fn take(&mut self) -> Option<(SourceLocation, AsciiChar)> {
+    fn next(&mut self) -> Option<Self::Item> {
         let next @ (location, ch) = self.chars.next()?;
         self.next_location = location.after_char(ch);
         match self.source {
@@ -585,6 +661,13 @@ impl<'a, I: Iterator<Item = AsciiChar>> Segmenter<'a, I> {
             }
         }
         Some(next)
+    }
+}
+
+impl<'a, I: Iterator<Item = AsciiChar>> Segmenter<'a, I> {
+    /// Peek at the next character.
+    pub fn peek(&mut self) -> Option<(SourceLocation, AsciiChar)> {
+        self.chars.peek().cloned()
     }
 
     /// Cut the current segment, returning the accumulated text as an
@@ -612,5 +695,19 @@ impl<'a, I: Iterator<Item = AsciiChar>> Segmenter<'a, I> {
         // Start of the next segment.
         self.segment_start = self.next_location;
         (segment_text, segment_location)
+    }
+
+    /// Return the unconsumed characters, including
+    /// all characters that were not made into a segment.
+    pub fn rest(self) -> AsciiRef<'a> {
+        match self.source {
+            SegmenterSource::Indexed { source, start, .. } => source.slice_from(start),
+            SegmenterSource::Streaming { mut accumulated } => {
+                for (_, ch) in self.chars {
+                    accumulated.push_char(ch);
+                }
+                accumulated.into()
+            }
+        }
     }
 }

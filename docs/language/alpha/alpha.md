@@ -62,6 +62,7 @@ Empty lines are allowed.
 - Registers are formatted like `r#`, where `#` is 0-31. Single-digit register
 names may be padded with a single 0. `ra` and `sp` are valid aliases for `r30`
 and `r31`, respectively.
+- No named `.equ` symbols or labels may represent valid register names.
 
 ## Comments
 

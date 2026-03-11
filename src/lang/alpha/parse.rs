@@ -5,7 +5,7 @@ use crate::lang::{
     ascii::{AsciiRef, AsciiStr, AsciiString},
 };
 
-use super::lex::{NumberKind, RegisterName};
+use super::lex::{NumberBase, RegisterName};
 
 /// A statement associating an address
 /// with a symbol.
@@ -28,7 +28,7 @@ pub enum Immediate {
         /// The immediate value.
         value: u32,
         /// The base of the literal.
-        kind: NumberKind,
+        kind: NumberBase,
     },
     /// A string literal immediate.
     ///
