@@ -2,6 +2,7 @@
 
 use std::{
     borrow::{Borrow, BorrowMut},
+    fmt::{Debug, Display},
     iter::{self, Peekable},
     mem,
     ops::{Deref, DerefMut, Index, IndexMut, Range, RangeFrom, RangeFull, RangeTo},
@@ -26,7 +27,7 @@ macro_rules! ascii {
 }
 
 #[repr(transparent)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 /// A transparent wrapper around [`u8`] the guarantees it is a valid
 /// ASCII byte.
 pub struct AsciiChar(u8);
@@ -56,13 +57,27 @@ impl From<AsciiChar> for u8 {
     }
 }
 
+impl Display for AsciiChar {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let ch = self.0 as char;
+        write!(f, "{ch}")
+    }
+}
+
+impl Debug for AsciiChar {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let ch = self.0 as char;
+        write!(f, "{ch}")
+    }
+}
+
 /// Byte slice guaranteed to make up a valid
 /// ASCII string.
 ///
 /// This type's API is minimal; it is mostly designed
 /// for consumption by a lexer. See [`AsciiStr::char_locations`].
 #[repr(transparent)]
-#[derive(Debug, PartialEq, Eq)]
+#[derive(PartialEq, Eq)]
 pub struct AsciiStr([AsciiChar]);
 
 impl AsciiStr {
@@ -250,6 +265,20 @@ impl<'a> IntoIterator for &'a AsciiStr {
 
     fn into_iter(self) -> Self::IntoIter {
         self.0.iter().cloned()
+    }
+}
+
+impl Display for AsciiStr {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let string: &str = self.as_ref();
+        write!(f, "{string}")
+    }
+}
+
+impl Debug for AsciiStr {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let string: &str = self.as_ref();
+        write!(f, "{string}")
     }
 }
 

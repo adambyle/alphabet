@@ -1,0 +1,25 @@
+.equ ARR_LEN_PTR, 0x400
+.equ ARR_PTR, 0x401
+
+start:
+    addi r1, r0, ARR_LEN_PTR
+    addi r2, r0, ARR_PTR
+    ldbu r3, 0(r1)
+    addi r1, r0, 0
+
+loop:
+    beq r3, r0, end
+    ldb r4, 0(r2)
+    add r1, r1, r4
+    addi r2, r2, 1
+    subi r3, r3, 1
+    jmp r0, loop
+
+end:
+    jmp r0, end
+
+.org 0x400
+    .byte 3
+    .byte 7
+    .byte 8
+    .byte -3

@@ -220,7 +220,7 @@ pub struct SourceToken<'a> {
 impl SourceToken<'_> {
     /// The kind of token, determining the token's role
     /// in the assembly syntax.
-    pub fn kind(&self) -> &Token {
+    pub fn token(&self) -> &Token {
         &self.token
     }
 
@@ -412,34 +412,36 @@ fn lex_number(
     current_char: AsciiChar,
     next_char: Option<AsciiChar>,
 ) -> Option<Result<(), TokenError>> {
-    let next_is_digit = next_char.is_some_and(|n| state.base.is_valid_digit(n));
-    let end_digits = !next_is_digit;
+    let end_digits = |base: NumberBase| next_char.is_none_or(|n| !base.is_valid_digit(n));
 
     match state.expect {
         NumberExpect::Start => {
-            let Some(next_char) = next_char else {
-                return Some(Err(TokenError::ExpectedDigit));
-            };
-            state.expect =
-                if current_char.byte() == b'0' && NumberBase::from_prefix(next_char).is_some() {
-                    NumberExpect::Prefix
-                } else {
-                    state.digits.push_char(current_char);
-                    NumberExpect::Digit
-                };
-            None
+            if current_char.byte() == b'0'
+                && next_char.is_some_and(|n| NumberBase::from_prefix(n).is_some())
+            {
+                state.expect = NumberExpect::Prefix;
+                return None;
+            }
+            state.digits.push_char(current_char);
+            if end_digits(state.base) {
+                Some(Ok(()))
+            } else {
+                state.expect = NumberExpect::Digit;
+                None
+            }
         }
         NumberExpect::Prefix => {
-            if end_digits {
-                return Some(Err(TokenError::ExpectedDigit));
-            }
+            state.expect = NumberExpect::Digit;
             state.base = NumberBase::from_prefix(current_char)
                 .expect("invalid token state: expected valid prefix char but found {current_char}");
+            if end_digits(state.base) {
+                return Some(Err(TokenError::ExpectedDigit));
+            }
             None
         }
         NumberExpect::Digit => {
             state.digits.push_char(current_char);
-            end_digits.then_some(Ok(()))
+            end_digits(state.base).then_some(Ok(()))
         }
     }
 }
@@ -459,7 +461,7 @@ impl LexerToken {
             // Newline must come before whitespace.
             (b'\n', _) => Some(Ok(Tk::Newline)),
             (c, n) if c.is_ascii_whitespace() => {
-                if n.is_some_and(|n| n.is_ascii_whitespace()) {
+                if n.is_some_and(|n| n != b'\n' && n.is_ascii_whitespace()) {
                     *self = Ltk::Whitespace;
                     None
                 } else {
@@ -494,8 +496,8 @@ impl LexerToken {
                     Some(Err(TokenError::UnclosedString))
                 }
             }
-            (c, n) if c.is_ascii_alphabetic() => {
-                if n.is_some_and(|n| n.is_ascii_alphanumeric() || n == b':') {
+            (c, n) if c.is_ascii_alphabetic() || c == b'_' => {
+                if n.is_some_and(|n| n.is_ascii_alphanumeric() || n == b'_' || n == b':') {
                     *self = Ltk::Identifier([current_char].into());
                     None
                 } else {
@@ -573,10 +575,10 @@ impl LexerToken {
                 }
             }
             Ltk::Directive(name) => {
+                name.push_char(current_char);
                 if let Some(n) = next_char
                     && n.byte().is_ascii_alphabetic()
                 {
-                    name.push_char(n);
                     None
                 } else {
                     let name = mem::take(name);
@@ -586,7 +588,7 @@ impl LexerToken {
             }
             Ltk::Identifier(ident) => {
                 if let Some(n) = next_char
-                    && (n.byte().is_ascii_alphanumeric() || n.byte() == b':')
+                    && (n.byte().is_ascii_alphanumeric() || n.byte() == b'_' || n.byte() == b':')
                 {
                     return if n.byte() == b':'
                         && let Some(register) = parse_register(ident)
@@ -600,12 +602,17 @@ impl LexerToken {
                 }
                 let mut ident = mem::take(ident);
                 *self = Ltk::None;
-                Some(Ok(if current_char.byte() == b':' {
+                let token = if current_char.byte() == b':' {
                     Tk::Label(ident)
                 } else {
                     ident.push_char(current_char);
-                    Tk::Symbol(ident)
-                }))
+                    if let Some(register) = parse_register(&ident) {
+                        Tk::Register(register)
+                    } else {
+                        Tk::Symbol(ident)
+                    }
+                };
+                Some(Ok(token))
             }
             Ltk::String(state) => {
                 let result = lex_string(state, current_char, next_char)?;
@@ -644,7 +651,7 @@ impl LexerToken {
                     Err(err) if *err.kind() == IntErrorKind::PosOverflow => {
                         Err(TokenError::NumericOutOfRange)
                     }
-                    Err(err) => panic!("unexpected int parse error {err:?}"),
+                    Err(err) => panic!("unexpected int parse error {err:?} from {digits:?}"),
                 })
             }
         }

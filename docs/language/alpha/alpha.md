@@ -151,7 +151,7 @@ valid directives.
 
 |Directive|Behavior
 |-|-
-|`.equ <symbol>, <value>`|Declare the string of characters `symbol` to alias the specified immediate value (up to 16 bits). The symbol is valid as an immediate value in an instruction. `symbol` must consist only of alphanumeric characters and may not start with a digit. It is an error to declare the same symbol twice.
+|`.equ <symbol>, <value>`|Declare the string of characters `symbol` to alias the specified immediate value (up to 16 bits). The symbol is valid as an immediate value in an instruction. `symbol` must consist only of alphanumeric characters and underscores and may not start with a digit. It is an error to declare the same symbol twice.
 |`.org <address>`|Move the cursor to `address`, which must be a 32-bit unsigned immediate value.
 |`.word <value>`|Write the provided 32-bit immediate value at the cursor.
 |`.half <value>`|Write the provided 16-bit immediate value at the cursor.
@@ -162,7 +162,7 @@ valid directives.
 ### Labels
 
 Labels have separate syntax from other directives. They consist only of
-a custom alphanumeric symbol (following the same rules as `.equ` symbols),
+a custom alphanumeric/underscore symbol (following the same rules as `.equ` symbols),
 followed by a `:` symbol. Labels and `.equ` symbols have separate
 namespaces and so may share names.
 
