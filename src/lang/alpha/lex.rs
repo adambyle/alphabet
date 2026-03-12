@@ -1,6 +1,6 @@
 //! Lexing for the Alpha assembly language.
 
-use std::{error::Error, fmt::Display, mem, num::IntErrorKind, thread::current};
+use std::{error::Error, fmt::Display, mem, num::IntErrorKind};
 
 use crate::lang::{
     SourceLocation,
@@ -42,6 +42,7 @@ impl NumberBase {
         }
     }
 
+    /// Return the radix of this number base.
     pub const fn radix(self) -> u32 {
         match self {
             Self::Binary => 2,
@@ -114,6 +115,15 @@ impl Display for RegisterName {
     }
 }
 
+#[derive(Debug, Clone)]
+/// Error lexing an ASCII hexcode escape.
+pub enum HexEscapeError {
+    /// A non-hex-digit character was found.
+    NonHexChar,
+    /// The parsed byte is outside the valid ASCII range.
+    NonAscii,
+}
+
 /// An error parsing a token.
 #[derive(Debug, Clone)]
 pub enum TokenError {
@@ -127,8 +137,10 @@ pub enum TokenError {
     UnclosedString,
     /// Invalid escape code.
     InvalidEscape,
-    /// Numeric literal is too large.
-    NumericOverflow,
+    /// Invalid hex digits for escape code.
+    InvalidHexEscape(HexEscapeError),
+    /// Numeric literal is outside the valid range.
+    NumericOutOfRange,
 }
 
 impl Display for TokenError {
@@ -176,16 +188,16 @@ pub enum Token {
     CloseParen,
     /// A sequence of letters representing a directive,
     /// beginning with a `.` symbol.
-    Directive,
+    Directive(AsciiString),
     /// A sequence of letters and digits naming an immediate value that
     /// may be used in instructions.
-    Symbol,
+    Symbol(AsciiString),
     /// The name of a register, by number or alias (`ra` and `sp`).
     Register(RegisterName),
     /// A sequence of letters and digits naming an instruction address
     /// that may be used in instructions as a word offset, ending with
     /// a `:` symbol.
-    Label,
+    Label(AsciiString),
     /// A numeric literal immediate value.
     Number {
         /// The immediate value.
@@ -194,10 +206,7 @@ pub enum Token {
         base: NumberBase,
     },
     /// A string literal immediate value.
-    String {
-        /// The characters that make up the string (escapes handled).
-        chars: AsciiString,
-    },
+    String(AsciiString),
 }
 
 #[derive(Debug, Clone)]
@@ -230,18 +239,51 @@ fn is_valid_string_char(ch: u8) -> bool {
     ch.is_ascii_graphic() || ch == b' '
 }
 
-fn escape_code(ch: u8) -> u8 {
-    match ch {
-        b'0' => b'\0',
-        b'n' => b'\n',
-        b'r' => b'\r',
-        b't' => b'\t',
-        ch => ch,
+fn escape_char(ch: AsciiChar) -> Option<AsciiChar> {
+    Some(
+        match ch.byte() {
+            b'0' => b'\0',
+            b'n' => b'\n',
+            b'r' => b'\r',
+            b't' => b'\t',
+            ch @ (b'\\' | b'"' | b'\'') => ch,
+            _ => return None,
+        }
+        .try_into()
+        .unwrap(),
+    )
+}
+
+fn parse_register(name: &AsciiStr) -> Option<RegisterName> {
+    let len = name.len();
+    if len != 2 && len != 3 {
+        return None;
+    }
+    if name == ascii!("sp") {
+        return Some(RegisterName::Sp);
+    }
+    if name == ascii!("ra") {
+        return Some(RegisterName::Ra);
+    };
+    if name[0].byte() != b'r' {
+        return None;
+    }
+    let index: &str = name[1..].as_ref();
+    if let Ok(index) = index.parse::<u8>()
+        && let Ok(index) = RegisterIndex::try_from(index)
+    {
+        Some(RegisterName::Index(index))
+    } else {
+        None
     }
 }
 
-fn is_valid_escape_code(ch: u8) -> bool {
-    [b'0', b'n', b'r', b't', b'x', b'\\', b'"', b'\''].contains(&ch)
+fn to_negative_i32_bits(val: u32) -> Option<u32> {
+    if val == 0 || val > (i32::MAX as u32) + 1 {
+        return None;
+    }
+
+    Some(!val + 1)
 }
 
 #[derive(Clone, Copy)]
@@ -253,7 +295,7 @@ enum StringEscape {
     // First character of hex escape.
     HexOne,
     // Second character of hex escape.
-    HexTwo,
+    HexTwo(AsciiChar),
 }
 
 struct StringState {
@@ -289,7 +331,7 @@ enum LexerToken {
     /// Comment state consumes everything until newline.
     Comment,
     /// Directive state consumes alphabetic characters.
-    Directive,
+    Directive(AsciiString),
     /// String state consumes valid string literal characters.
     String(StringState),
     /// Number state consumes numeral prefixes and digits
@@ -297,7 +339,7 @@ enum LexerToken {
     Number(NumberState),
     /// Identifier state consumes alphanumeric characters
     /// for symbols, register IDs, and labels.
-    Identifer,
+    Identifier(AsciiString),
 }
 
 fn lex_string(
@@ -305,7 +347,64 @@ fn lex_string(
     current_char: AsciiChar,
     next_char: Option<AsciiChar>,
 ) -> Option<Result<(), TokenError>> {
-    None
+    let next_char_valid = next_char.is_some_and(|n| is_valid_string_char(n.byte()));
+    match state.escape {
+        StringEscape::Literal => {
+            // End string with matching unescaped quote.
+            if current_char == state.quote_kind {
+                Some(Ok(()))
+            } else if !next_char_valid {
+                // Verify next character.
+                Some(Err(TokenError::UnclosedString))
+            } else if current_char.byte() == b'\\' {
+                // Begin escape.
+                state.escape = StringEscape::Escape;
+                None
+            } else {
+                state.chars.push_char(current_char);
+                None
+            }
+        }
+        _ if !next_char_valid => Some(Err(TokenError::UnclosedString)),
+        StringEscape::Escape => {
+            if current_char.byte() == b'x' {
+                state.escape = StringEscape::HexOne;
+                None
+            } else if let Some(escaped) = escape_char(current_char) {
+                state.chars.push_char(escaped);
+                None
+            } else {
+                Some(Err(TokenError::InvalidEscape))
+            }
+        }
+        StringEscape::HexOne => {
+            if current_char.byte().is_ascii_hexdigit() {
+                state.escape = StringEscape::HexTwo(current_char);
+                None
+            } else {
+                Some(Err(TokenError::InvalidHexEscape(
+                    HexEscapeError::NonHexChar,
+                )))
+            }
+        }
+        StringEscape::HexTwo(first_char) => {
+            if current_char.byte().is_ascii_hexdigit() {
+                let string: &AsciiStr = [first_char, current_char].as_slice().into();
+                let string: &str = string.as_ref();
+                let byte = u8::from_str_radix(string, 16).expect("parsing hex failed");
+                if let Ok(ch) = byte.try_into() {
+                    state.chars.push_char(ch);
+                    None
+                } else {
+                    Some(Err(TokenError::InvalidHexEscape(HexEscapeError::NonAscii)))
+                }
+            } else {
+                Some(Err(TokenError::InvalidHexEscape(
+                    HexEscapeError::NonHexChar,
+                )))
+            }
+        }
+    }
 }
 
 fn lex_number(
@@ -357,6 +456,7 @@ impl LexerToken {
         type Tk = Token;
 
         match (current_byte, next_byte) {
+            // Newline must come before whitespace.
             (b'\n', _) => Some(Ok(Tk::Newline)),
             (c, n) if c.is_ascii_whitespace() => {
                 if n.is_some_and(|n| n.is_ascii_whitespace()) {
@@ -376,7 +476,7 @@ impl LexerToken {
             (b')', _) => Some(Ok(Tk::CloseParen)),
             (b'.', n) => {
                 if n.is_some_and(|n| n.is_ascii_alphabetic()) {
-                    *self = Ltk::Directive;
+                    *self = Ltk::Directive(AsciiString::new());
                     None
                 } else {
                     Some(Err(TokenError::ExpectedDirective))
@@ -395,13 +495,11 @@ impl LexerToken {
                 }
             }
             (c, n) if c.is_ascii_alphabetic() => {
-                if n.is_some_and(|n| n.is_ascii_alphanumeric()) {
-                    *self = Ltk::Identifer;
+                if n.is_some_and(|n| n.is_ascii_alphanumeric() || n == b':') {
+                    *self = Ltk::Identifier([current_char].into());
                     None
-                } else if n == Some(b':') {
-                    Some(Ok(Tk::Label))
                 } else {
-                    Some(Ok(Tk::Symbol))
+                    Some(Ok(Tk::Symbol([current_char].into())))
                 }
             }
             (c, n) if c.is_ascii_digit() => {
@@ -410,7 +508,7 @@ impl LexerToken {
                         negative: false,
                         expect: NumberExpect::Digit,
                         base: NumberBase::Decimal,
-                        digits: vec![current_char].into(),
+                        digits: [current_char].into(),
                     });
                     None
                 } else if c == b'0'
@@ -474,13 +572,40 @@ impl LexerToken {
                     Some(Ok(Tk::Space))
                 }
             }
-            Ltk::Directive => {
-                if next_char.is_some_and(|n| n.byte().is_ascii_alphabetic()) {
+            Ltk::Directive(name) => {
+                if let Some(n) = next_char
+                    && n.byte().is_ascii_alphabetic()
+                {
+                    name.push_char(n);
                     None
                 } else {
+                    let name = mem::take(name);
                     *self = Ltk::None;
-                    Some(Ok(Tk::Directive))
+                    Some(Ok(Tk::Directive(name)))
                 }
+            }
+            Ltk::Identifier(ident) => {
+                if let Some(n) = next_char
+                    && (n.byte().is_ascii_alphanumeric() || n.byte() == b':')
+                {
+                    return if n.byte() == b':'
+                        && let Some(register) = parse_register(ident)
+                    {
+                        *self = Ltk::None;
+                        Some(Ok(Tk::Register(register)))
+                    } else {
+                        ident.push_char(current_char);
+                        None
+                    };
+                }
+                let mut ident = mem::take(ident);
+                *self = Ltk::None;
+                Some(Ok(if current_char.byte() == b':' {
+                    Tk::Label(ident)
+                } else {
+                    ident.push_char(current_char);
+                    Tk::Symbol(ident)
+                }))
             }
             Ltk::String(state) => {
                 let result = lex_string(state, current_char, next_char)?;
@@ -490,7 +615,7 @@ impl LexerToken {
                 }
                 let chars = mem::take(&mut state.chars);
                 *self = Ltk::None;
-                Some(Ok(Tk::String { chars }))
+                Some(Ok(Tk::String(chars)))
             }
             Ltk::Number(state) => {
                 let result = lex_number(state, current_char, next_char)?;
@@ -502,16 +627,26 @@ impl LexerToken {
                 let digits: &str = digits.as_ref();
                 let base = state.base;
                 let value = u32::from_str_radix(digits, base.radix());
+                let negative = state.negative;
                 *self = Ltk::None;
                 Some(match value {
-                    Ok(value) => Ok(Tk::Number { value, base }),
+                    Ok(value) => {
+                        if negative {
+                            if let Some(value) = to_negative_i32_bits(value) {
+                                Ok(Tk::Number { value, base })
+                            } else {
+                                Err(TokenError::NumericOutOfRange)
+                            }
+                        } else {
+                            Ok(Tk::Number { value, base })
+                        }
+                    }
                     Err(err) if *err.kind() == IntErrorKind::PosOverflow => {
-                        Err(TokenError::NumericOverflow)
+                        Err(TokenError::NumericOutOfRange)
                     }
                     Err(err) => panic!("unexpected int parse error {err:?}"),
                 })
             }
-            _ => panic!("impossible token state"),
         }
     }
 }

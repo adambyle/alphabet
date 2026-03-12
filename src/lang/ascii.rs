@@ -66,6 +66,16 @@ impl From<AsciiChar> for u8 {
 pub struct AsciiStr([AsciiChar]);
 
 impl AsciiStr {
+    /// The length in bytes of the string.
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    /// Whether the string is empty.
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
     /// Return an iterator over the ASCII characters in the string slice.
     pub fn chars(&self) -> <&Self as IntoIterator>::IntoIter {
         self.into_iter()
@@ -271,6 +281,12 @@ impl From<Vec<AsciiChar>> for AsciiString {
     }
 }
 
+impl<const N: usize> From<[AsciiChar; N]> for AsciiString {
+    fn from(value: [AsciiChar; N]) -> Self {
+        AsciiString(value.to_vec())
+    }
+}
+
 impl FromIterator<AsciiChar> for AsciiString {
     fn from_iter<T: IntoIterator<Item = AsciiChar>>(iter: T) -> Self {
         AsciiString(iter.into_iter().collect())
@@ -288,6 +304,14 @@ impl TryFrom<Vec<u8>> for AsciiString {
         } else {
             Err(value.into_iter().find(|b| !b.is_ascii()).unwrap())
         }
+    }
+}
+
+impl<const N: usize> TryFrom<[u8; N]> for AsciiString {
+    type Error = u8;
+
+    fn try_from(value: [u8; N]) -> Result<Self, Self::Error> {
+        AsciiString::try_from(value.to_vec())
     }
 }
 
