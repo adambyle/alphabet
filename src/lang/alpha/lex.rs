@@ -371,6 +371,7 @@ fn lex_string(
                 state.escape = StringEscape::HexOne;
                 None
             } else if let Some(escaped) = escape_char(current_char) {
+                state.escape = StringEscape::Literal;
                 state.chars.push_char(escaped);
                 None
             } else {
@@ -399,6 +400,7 @@ fn lex_string(
                     Some(Err(TokenError::InvalidHexEscape(HexEscapeError::NonAscii)))
                 }
             } else {
+                state.escape = StringEscape::Literal;
                 Some(Err(TokenError::InvalidHexEscape(
                     HexEscapeError::NonHexChar,
                 )))
@@ -719,7 +721,7 @@ impl<'a, I: Iterator<Item = AsciiChar>> Iterator for Lexer<'a, I> {
         loop {
             let Some((_, current_char)) = self.segmenter.next() else {
                 // Active token is invalid state.
-                assert!(
+                debug_assert!(
                     matches!(self.active_token, LexerToken::None),
                     "unhandled active token"
                 );

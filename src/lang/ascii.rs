@@ -75,7 +75,7 @@ impl Debug for AsciiChar {
 /// ASCII string.
 ///
 /// This type's API is minimal; it is mostly designed
-/// for consumption by a lexer. See [`AsciiStr::char_locations`].
+/// for consumption by a lexer.
 #[repr(transparent)]
 #[derive(PartialEq, Eq)]
 pub struct AsciiStr([AsciiChar]);

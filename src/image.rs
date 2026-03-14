@@ -422,7 +422,7 @@ impl ImageBuilder {
             entries.push(entry);
             active_entry = None;
         }
-        assert!(active_entry.is_none(), "last entry had merge padding");
+        debug_assert!(active_entry.is_none(), "last entry had merge padding");
         Ok(ImageEntries::Entries(Box::new(
             entries.into_iter().map(Into::into),
         )))
@@ -698,7 +698,6 @@ impl<'a> Iterator for ImageEntries<'a> {
                     }
                     Err(ImageEntryError::BadOffsets { .. }) => {
                         // Ignore bad entry and assume data length zero.
-                        println!("Bruh");
                         continue;
                     }
                     _ => unreachable!(),

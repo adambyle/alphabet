@@ -6,6 +6,6 @@ dedicated programming languages.
 
 Alphabet recognizes the ASCII character set. Non-graphic, non single space
 characters must be escaped. Alphabet accepts the following escapes:
-`\0`, `\a`, `\b`, `\t`, `\n`, `\r`. Other characters must be escaped by their
+`\0`, `\t`, `\n`, and `\r`. Other characters must be escaped by their
 hex code, with the syntax `\x00` where `00` must be 2 hexadecimal digits,
 uppercase or lowercase.
