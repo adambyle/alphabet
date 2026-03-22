@@ -13,7 +13,7 @@ fn main() {
 
     for token in lexer {
         match token {
-            Ok(token) => println!("{:?} {}", token.token(), token.text()),
+            Ok(token) => println!("{:?} {}", token.token(), token.source()),
             Err(token_error) => eprintln!("{:?}", token_error.error),
         }
     }

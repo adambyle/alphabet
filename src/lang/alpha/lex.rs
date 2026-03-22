@@ -1,10 +1,20 @@
 //! Lexing for the Alpha assembly language.
 
-use std::{error::Error, fmt::Display, mem, num::IntErrorKind};
+use std::{
+    cell::RefCell,
+    collections::VecDeque,
+    error,
+    fmt::Display,
+    io::{self, BufReader, Bytes, Read},
+    mem,
+    num::IntErrorKind,
+    rc::Rc,
+    result,
+};
 
 use crate::lang::{
     SourceLocation,
-    ascii::{AsciiChar, AsciiRef, AsciiStr, AsciiString, Segmenter},
+    ascii::{AsciiChar, AsciiRef, AsciiStr, AsciiString, FallibleAsciiChars, Segmenter},
 };
 use crate::{ascii, vm};
 
@@ -79,7 +89,7 @@ impl RegisterIndex {
 impl TryFrom<u8> for RegisterIndex {
     type Error = ();
 
-    fn try_from(value: u8) -> Result<Self, Self::Error> {
+    fn try_from(value: u8) -> result::Result<Self, Self::Error> {
         if value >= vm::REGISTER_COUNT as u8 {
             Err(())
         } else {
@@ -125,8 +135,12 @@ pub enum HexEscapeError {
 }
 
 /// An error parsing a token.
-#[derive(Debug, Clone)]
-pub enum TokenError {
+#[derive(Debug)]
+pub enum Error {
+    /// I/O error.
+    Io(io::Error),
+    /// Non-ASCII digit encountered in input.
+    NonAscii(u8),
     /// Character not valid starting a token.
     InvalidStart,
     /// Directive expected alphabetic first character.
@@ -143,33 +157,108 @@ pub enum TokenError {
     NumericOutOfRange,
 }
 
-impl Display for TokenError {
+impl Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "token error")
     }
 }
 
-impl Error for TokenError {}
+impl error::Error for Error {}
 
 /// An error parsing a token, bundled with information
 /// about the source the token came from.
-#[derive(Debug, Clone)]
-pub struct SourceTokenError<'a> {
+#[derive(Debug)]
+pub struct SourceError<'a> {
     /// The error with the token.
-    pub error: TokenError,
+    pub error: Error,
     /// The source that caused the error.
     pub source: AsciiRef<'a>,
     /// The location of the source that caused the error;.
     pub location: SourceLocation,
 }
 
-impl Display for SourceTokenError<'_> {
+impl Display for SourceError<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "source token error")
     }
 }
 
-impl Error for SourceTokenError<'_> {}
+impl error::Error for SourceError<'_> {}
+
+/// Result of lexing.
+pub type Result = result::Result<Token, Error>;
+
+/// Result of lexing from source..
+pub type SourceResult<'a> = result::Result<SourceToken<'a>, SourceError<'a>>;
+
+/// A valid name for a symbol, which consists of
+/// alphanumeric characters and underscores and may
+/// not begin with a digit.
+#[derive(Debug, Clone)]
+pub struct SymbolName(AsciiString);
+
+impl From<SymbolName> for AsciiString {
+    fn from(value: SymbolName) -> Self {
+        value.0
+    }
+}
+
+impl TryFrom<AsciiString> for SymbolName {
+    type Error = AsciiChar;
+
+    fn try_from(value: AsciiString) -> result::Result<Self, Self::Error> {
+        let symbol = SymbolName(value);
+        let mut chars = symbol.0.chars();
+        let Some(first) = chars.next() else {
+            return Ok(symbol);
+        };
+        if !first.byte().is_ascii_alphabetic() && first.byte() != b'_' {
+            return Err(first);
+        }
+        for char in chars {
+            if !char.byte().is_ascii_alphanumeric() && char.byte() != b'_' {
+                return Err(char);
+            }
+        }
+        Ok(symbol)
+    }
+}
+
+impl AsRef<AsciiString> for SymbolName {
+    fn as_ref(&self) -> &AsciiString {
+        &self.0
+    }
+}
+
+/// A valid name for an assembler directive,
+/// consisting of alphabetic characters.
+#[derive(Debug, Clone)]
+pub struct DirectiveName(AsciiString);
+
+impl From<DirectiveName> for AsciiString {
+    fn from(value: DirectiveName) -> Self {
+        value.0
+    }
+}
+
+impl TryFrom<AsciiString> for DirectiveName {
+    type Error = AsciiChar;
+
+    fn try_from(value: AsciiString) -> result::Result<Self, Self::Error> {
+        for char in value.chars() {
+            if !char.byte().is_ascii_alphabetic() {
+                return Err(char);
+            }
+        }
+        Ok(DirectiveName(value))
+    }
+}
+
+impl AsRef<AsciiString> for DirectiveName {
+    fn as_ref(&self) -> &AsciiString {
+        &self.0
+    }
+}
 
 /// A unit of assembly syntax.
 #[derive(Debug, Clone)]
@@ -188,16 +277,16 @@ pub enum Token {
     CloseParen,
     /// A sequence of letters representing a directive,
     /// beginning with a `.` symbol.
-    Directive(AsciiString),
+    Directive(DirectiveName),
     /// A sequence of letters and digits naming an immediate value that
     /// may be used in instructions.
-    Symbol(AsciiString),
+    Symbol(SymbolName),
     /// The name of a register, by number or alias (`ra` and `sp`).
     Register(RegisterName),
     /// A sequence of letters and digits naming an instruction address
     /// that may be used in instructions as a word offset, ending with
     /// a `:` symbol.
-    Label(AsciiString),
+    Label(SymbolName),
     /// A numeric literal immediate value.
     Number {
         /// The immediate value.
@@ -212,9 +301,9 @@ pub enum Token {
 #[derive(Debug, Clone)]
 /// A unit of assembly syntax from source.
 pub struct SourceToken<'a> {
-    token: Token,
-    source: AsciiRef<'a>,
-    location: Option<SourceLocation>,
+    pub(crate) token: Token,
+    pub(crate) source: AsciiRef<'a>,
+    pub(crate) location: SourceLocation,
 }
 
 impl SourceToken<'_> {
@@ -225,13 +314,19 @@ impl SourceToken<'_> {
     }
 
     /// The raw text that the lexer turned into this token.
-    pub fn text(&self) -> &AsciiStr {
+    pub fn source(&self) -> &AsciiStr {
         &self.source
     }
 
     /// The location of the token in its source, if known.
-    pub fn location(&self) -> Option<SourceLocation> {
+    pub fn location(&self) -> SourceLocation {
         self.location
+    }
+}
+
+impl AsRef<Token> for SourceToken<'_> {
+    fn as_ref(&self) -> &Token {
+        &self.token
     }
 }
 
@@ -322,7 +417,7 @@ struct NumberState {
 }
 
 #[derive(Default)]
-enum LexerToken {
+enum State {
     #[default]
     /// No active token state.
     None,
@@ -346,7 +441,7 @@ fn lex_string(
     state: &mut StringState,
     current_char: AsciiChar,
     next_char: Option<AsciiChar>,
-) -> Option<Result<(), TokenError>> {
+) -> Option<result::Result<(), Error>> {
     let next_char_valid = next_char.is_some_and(|n| is_valid_string_char(n.byte()));
     match state.escape {
         StringEscape::Literal => {
@@ -355,7 +450,7 @@ fn lex_string(
                 Some(Ok(()))
             } else if !next_char_valid {
                 // Verify next character.
-                Some(Err(TokenError::UnclosedString))
+                Some(Err(Error::UnclosedString))
             } else if current_char.byte() == b'\\' {
                 // Begin escape.
                 state.escape = StringEscape::Escape;
@@ -365,7 +460,7 @@ fn lex_string(
                 None
             }
         }
-        _ if !next_char_valid => Some(Err(TokenError::UnclosedString)),
+        _ if !next_char_valid => Some(Err(Error::UnclosedString)),
         StringEscape::Escape => {
             if current_char.byte() == b'x' {
                 state.escape = StringEscape::HexOne;
@@ -375,7 +470,7 @@ fn lex_string(
                 state.chars.push_char(escaped);
                 None
             } else {
-                Some(Err(TokenError::InvalidEscape))
+                Some(Err(Error::InvalidEscape))
             }
         }
         StringEscape::HexOne => {
@@ -383,9 +478,7 @@ fn lex_string(
                 state.escape = StringEscape::HexTwo(current_char);
                 None
             } else {
-                Some(Err(TokenError::InvalidHexEscape(
-                    HexEscapeError::NonHexChar,
-                )))
+                Some(Err(Error::InvalidHexEscape(HexEscapeError::NonHexChar)))
             }
         }
         StringEscape::HexTwo(first_char) => {
@@ -397,13 +490,11 @@ fn lex_string(
                     state.chars.push_char(ch);
                     None
                 } else {
-                    Some(Err(TokenError::InvalidHexEscape(HexEscapeError::NonAscii)))
+                    Some(Err(Error::InvalidHexEscape(HexEscapeError::NonAscii)))
                 }
             } else {
                 state.escape = StringEscape::Literal;
-                Some(Err(TokenError::InvalidHexEscape(
-                    HexEscapeError::NonHexChar,
-                )))
+                Some(Err(Error::InvalidHexEscape(HexEscapeError::NonHexChar)))
             }
         }
     }
@@ -413,7 +504,7 @@ fn lex_number(
     state: &mut NumberState,
     current_char: AsciiChar,
     next_char: Option<AsciiChar>,
-) -> Option<Result<(), TokenError>> {
+) -> Option<result::Result<(), Error>> {
     let end_digits = |base: NumberBase| next_char.is_none_or(|n| !base.is_valid_digit(n));
 
     match state.expect {
@@ -437,7 +528,7 @@ fn lex_number(
             state.base = NumberBase::from_prefix(current_char)
                 .expect("invalid token state: expected valid prefix char but found {current_char}");
             if end_digits(state.base) {
-                return Some(Err(TokenError::ExpectedDigit));
+                return Some(Err(Error::ExpectedDigit));
             }
             None
         }
@@ -448,15 +539,15 @@ fn lex_number(
     }
 }
 
-impl LexerToken {
+impl State {
     fn lex_none(
         &mut self,
         current_char: AsciiChar,
         next_char: Option<AsciiChar>,
-    ) -> Option<Result<Token, TokenError>> {
+    ) -> Option<Result> {
         let current_byte = current_char.byte();
         let next_byte = next_char.map(|ch| ch.byte());
-        type Ltk = LexerToken;
+        type Sm = State;
         type Tk = Token;
 
         match (current_byte, next_byte) {
@@ -464,7 +555,7 @@ impl LexerToken {
             (b'\n', _) => Some(Ok(Tk::Newline)),
             (c, n) if c.is_ascii_whitespace() => {
                 if n.is_some_and(|n| n != b'\n' && n.is_ascii_whitespace()) {
-                    *self = Ltk::Whitespace;
+                    *self = Sm::Whitespace;
                     None
                 } else {
                     Some(Ok(Tk::Space))
@@ -472,7 +563,7 @@ impl LexerToken {
             }
             (b';', None | Some(b'\n')) => Some(Ok(Tk::Comment)),
             (b';', _) => {
-                *self = Ltk::Comment;
+                *self = Sm::Comment;
                 None
             }
             (b',', _) => Some(Ok(Tk::Comma)),
@@ -480,35 +571,36 @@ impl LexerToken {
             (b')', _) => Some(Ok(Tk::CloseParen)),
             (b'.', n) => {
                 if n.is_some_and(|n| n.is_ascii_alphabetic()) {
-                    *self = Ltk::Directive(AsciiString::new());
+                    *self = Sm::Directive(AsciiString::new());
                     None
                 } else {
-                    Some(Err(TokenError::ExpectedDirective))
+                    Some(Err(Error::ExpectedDirective))
                 }
             }
             (b'\'' | b'"', n) => {
                 if n.is_some_and(is_valid_string_char) {
-                    *self = Ltk::String(StringState {
+                    *self = Sm::String(StringState {
                         quote_kind: current_char,
                         escape: StringEscape::Literal,
                         chars: AsciiString::new(),
                     });
                     None
                 } else {
-                    Some(Err(TokenError::UnclosedString))
+                    Some(Err(Error::UnclosedString))
                 }
             }
             (c, n) if c.is_ascii_alphabetic() || c == b'_' => {
                 if n.is_some_and(|n| n.is_ascii_alphanumeric() || n == b'_' || n == b':') {
-                    *self = Ltk::Identifier([current_char].into());
+                    *self = Sm::Identifier([current_char].into());
                     None
                 } else {
-                    Some(Ok(Tk::Symbol([current_char].into())))
+                    let symbol = SymbolName([current_char].into());
+                    Some(Ok(Tk::Symbol(symbol)))
                 }
             }
             (c, n) if c.is_ascii_digit() => {
                 if n.is_some_and(|n| n.is_ascii_digit()) {
-                    *self = Ltk::Number(NumberState {
+                    *self = Sm::Number(NumberState {
                         negative: false,
                         expect: NumberExpect::Digit,
                         base: NumberBase::Decimal,
@@ -518,7 +610,7 @@ impl LexerToken {
                 } else if c == b'0'
                     && next_char.is_some_and(|n| NumberBase::from_prefix(n).is_some())
                 {
-                    *self = Ltk::Number(NumberState {
+                    *self = Sm::Number(NumberState {
                         negative: false,
                         expect: NumberExpect::Prefix,
                         base: NumberBase::Decimal,
@@ -526,7 +618,7 @@ impl LexerToken {
                     });
                     None
                 } else {
-                    *self = Ltk::None;
+                    *self = Sm::None;
                     Some(Ok(Token::Number {
                         value: (c - b'0') as u32,
                         base: NumberBase::Decimal,
@@ -535,7 +627,7 @@ impl LexerToken {
             }
             (c @ (b'+' | b'-'), n) => {
                 if n.is_some_and(|n| n.is_ascii_digit()) {
-                    *self = Ltk::Number(NumberState {
+                    *self = Sm::Number(NumberState {
                         negative: c == b'-',
                         expect: NumberExpect::Start,
                         base: NumberBase::Decimal,
@@ -543,10 +635,10 @@ impl LexerToken {
                     });
                     None
                 } else {
-                    Some(Err(TokenError::ExpectedDigit))
+                    Some(Err(Error::ExpectedDigit))
                 }
             }
-            _ => Some(Err(TokenError::InvalidStart)),
+            _ => Some(Err(Error::InvalidStart)),
         }
     }
 
@@ -554,29 +646,29 @@ impl LexerToken {
         &mut self,
         current_char: AsciiChar,
         next_char: Option<AsciiChar>,
-    ) -> Option<Result<Token, TokenError>> {
-        type Ltk = LexerToken;
+    ) -> Option<Result> {
+        type Sm = State;
         type Tk = Token;
 
         match self {
-            Ltk::None => self.lex_none(current_char, next_char),
-            Ltk::Comment => {
+            Sm::None => self.lex_none(current_char, next_char),
+            Sm::Comment => {
                 if next_char.is_none_or(|n| n.byte() == b'\n') {
-                    *self = Ltk::None;
+                    *self = Sm::None;
                     Some(Ok(Tk::Comment))
                 } else {
                     None
                 }
             }
-            Ltk::Whitespace => {
+            Sm::Whitespace => {
                 if next_char.is_some_and(|n| n.byte() != b'\n' && n.byte().is_ascii_whitespace()) {
                     None
                 } else {
-                    *self = Ltk::None;
+                    *self = Sm::None;
                     Some(Ok(Tk::Space))
                 }
             }
-            Ltk::Directive(name) => {
+            Sm::Directive(name) => {
                 name.push_char(current_char);
                 if let Some(n) = next_char
                     && n.byte().is_ascii_alphabetic()
@@ -584,18 +676,18 @@ impl LexerToken {
                     None
                 } else {
                     let name = mem::take(name);
-                    *self = Ltk::None;
-                    Some(Ok(Tk::Directive(name)))
+                    *self = Sm::None;
+                    Some(Ok(Tk::Directive(DirectiveName(name))))
                 }
             }
-            Ltk::Identifier(ident) => {
+            Sm::Identifier(ident) => {
                 if let Some(n) = next_char
                     && (n.byte().is_ascii_alphanumeric() || n.byte() == b'_' || n.byte() == b':')
                 {
                     return if n.byte() == b':'
                         && let Some(register) = parse_register(ident)
                     {
-                        *self = Ltk::None;
+                        *self = Sm::None;
                         Some(Ok(Tk::Register(register)))
                     } else {
                         ident.push_char(current_char);
@@ -603,33 +695,33 @@ impl LexerToken {
                     };
                 }
                 let mut ident = mem::take(ident);
-                *self = Ltk::None;
+                *self = Sm::None;
                 let token = if current_char.byte() == b':' {
-                    Tk::Label(ident)
+                    Tk::Label(SymbolName(ident))
                 } else {
                     ident.push_char(current_char);
                     if let Some(register) = parse_register(&ident) {
                         Tk::Register(register)
                     } else {
-                        Tk::Symbol(ident)
+                        Tk::Symbol(SymbolName(ident))
                     }
                 };
                 Some(Ok(token))
             }
-            Ltk::String(state) => {
+            Sm::String(state) => {
                 let result = lex_string(state, current_char, next_char)?;
                 if let Err(err) = result {
-                    *self = Ltk::None;
+                    *self = Sm::None;
                     return Some(Err(err));
                 }
                 let chars = mem::take(&mut state.chars);
-                *self = Ltk::None;
+                *self = Sm::None;
                 Some(Ok(Tk::String(chars)))
             }
-            Ltk::Number(state) => {
+            Sm::Number(state) => {
                 let result = lex_number(state, current_char, next_char)?;
                 if let Err(err) = result {
-                    *self = Ltk::None;
+                    *self = Sm::None;
                     return Some(Err(err));
                 }
                 let digits = mem::take(&mut state.digits);
@@ -637,21 +729,21 @@ impl LexerToken {
                 let base = state.base;
                 let value = u32::from_str_radix(digits, base.radix());
                 let negative = state.negative;
-                *self = Ltk::None;
+                *self = Sm::None;
                 Some(match value {
                     Ok(value) => {
                         if negative {
                             if let Some(value) = to_negative_i32_bits(value) {
                                 Ok(Tk::Number { value, base })
                             } else {
-                                Err(TokenError::NumericOutOfRange)
+                                Err(Error::NumericOutOfRange)
                             }
                         } else {
                             Ok(Tk::Number { value, base })
                         }
                     }
                     Err(err) if *err.kind() == IntErrorKind::PosOverflow => {
-                        Err(TokenError::NumericOutOfRange)
+                        Err(Error::NumericOutOfRange)
                     }
                     Err(err) => panic!("unexpected int parse error {err:?} from {digits:?}"),
                 })
@@ -663,7 +755,7 @@ impl LexerToken {
 /// Iterator over source assembly that outputs a stream of tokens.
 pub struct Lexer<'a, I: Iterator<Item = AsciiChar>> {
     segmenter: Segmenter<'a, I>,
-    active_token: LexerToken,
+    state: State,
 }
 
 impl<'a> Lexer<'a, <AsciiRef<'a> as IntoIterator>::IntoIter> {
@@ -672,7 +764,7 @@ impl<'a> Lexer<'a, <AsciiRef<'a> as IntoIterator>::IntoIter> {
         let segmenter = Segmenter::segment_str(source);
         Lexer {
             segmenter,
-            active_token: LexerToken::None,
+            state: State::None,
         }
     }
 }
@@ -683,7 +775,7 @@ impl<I: Iterator<Item = AsciiChar>> Lexer<'static, I> {
         let segmenter = Segmenter::segment_chars(source);
         Lexer {
             segmenter,
-            active_token: LexerToken::None,
+            state: State::None,
         }
     }
 }
@@ -694,18 +786,15 @@ impl<'a, I: Iterator<Item = AsciiChar>> Lexer<'a, I> {
         self.segmenter.rest()
     }
 
-    fn sourcify(
-        &mut self,
-        result: Result<Token, TokenError>,
-    ) -> Result<SourceToken<'a>, SourceTokenError<'a>> {
+    fn sourcify(&mut self, result: Result) -> SourceResult<'a> {
         let (source, location) = self.segmenter.cut();
         match result {
             Ok(token) => Ok(SourceToken {
                 token,
                 source,
-                location: Some(location),
+                location,
             }),
-            Err(error) => Err(SourceTokenError {
+            Err(error) => Err(SourceError {
                 error,
                 source,
                 location,
@@ -715,24 +804,130 @@ impl<'a, I: Iterator<Item = AsciiChar>> Lexer<'a, I> {
 }
 
 impl<'a, I: Iterator<Item = AsciiChar>> Iterator for Lexer<'a, I> {
-    type Item = Result<SourceToken<'a>, SourceTokenError<'a>>;
+    type Item = SourceResult<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
         loop {
             let Some((_, current_char)) = self.segmenter.next() else {
                 // Active token is invalid state.
-                debug_assert!(
-                    matches!(self.active_token, LexerToken::None),
-                    "unhandled active token"
-                );
+                debug_assert!(matches!(self.state, State::None), "unhandled active token");
                 return None;
             };
             let next_char = self.segmenter.peek().map(|(_, ch)| ch);
-            let result = self.active_token.lex_char(current_char, next_char);
+            let result = self.state.lex_char(current_char, next_char);
             let Some(result) = result else {
+                // Continue lexing until a token is complete.
                 continue;
             };
             return Some(self.sourcify(result));
         }
+    }
+}
+
+pub struct ByteLexer<I: Iterator<Item = u8>> {
+    invalid: Rc<RefCell<VecDeque<u8>>>,
+    lexer: Lexer<'static, FallibleAsciiChars<u8, I>>,
+}
+
+impl<I> ByteLexer<I>
+where
+    I: Iterator<Item = u8>,
+{
+    pub fn lex<J: IntoIterator<IntoIter = I>>(bytes: J) -> Self {
+        let (chars, invalid) = FallibleAsciiChars::new(bytes);
+        ByteLexer {
+            invalid,
+            lexer: Lexer::lex_chars(chars),
+        }
+    }
+
+    fn check_invalid(&mut self) -> Option<<Self as Iterator>::Item> {
+        let mut invalid = RefCell::borrow_mut(&self.invalid);
+        let byte = invalid.pop_front()?;
+        let (source, location) = self.lexer.segmenter.cut();
+        self.lexer.state = State::None;
+        let error = SourceError {
+            error: Error::NonAscii(byte),
+            source,
+            location,
+        };
+        Some(Err(error))
+    }
+}
+
+impl<I> Iterator for ByteLexer<I>
+where
+    I: Iterator<Item = u8>,
+{
+    type Item = SourceResult<'static>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if let Some(err) = self.check_invalid() {
+            return Some(err);
+        }
+        let result = self.lexer.next()?;
+        let invalid = self.check_invalid();
+        invalid.or(Some(result))
+    }
+}
+
+pub struct ReadLexer<I: Iterator<Item = io::Result<u8>>> {
+    invalid: Rc<RefCell<VecDeque<io::Result<u8>>>>,
+    lexer: Lexer<'static, FallibleAsciiChars<io::Result<u8>, I>>,
+}
+
+impl<I> ReadLexer<I>
+where
+    I: Iterator<Item = io::Result<u8>>,
+{
+    pub fn lex<J: IntoIterator<IntoIter = I>>(bytes: J) -> Self {
+        let (chars, invalid) = FallibleAsciiChars::new(bytes);
+        ReadLexer {
+            invalid,
+            lexer: Lexer::lex_chars(chars),
+        }
+    }
+
+    fn check_invalid(&mut self) -> Option<<Self as Iterator>::Item> {
+        let mut invalid = RefCell::borrow_mut(&self.invalid);
+        let result = invalid.pop_front()?;
+        let (source, location) = self.lexer.segmenter.cut();
+        self.lexer.state = State::None;
+        let error = match result {
+            Ok(byte) => Error::NonAscii(byte),
+            Err(err) => Error::Io(err),
+        };
+        let error = SourceError {
+            error,
+            source,
+            location,
+        };
+        Some(Err(error))
+    }
+}
+
+impl<R: Read> ReadLexer<Bytes<BufReader<R>>> {
+    /// Lex the contents of a reader, which is
+    /// automatically buffered.
+    pub fn lex_reader(reader: R) -> Self {
+        let buf = BufReader::new(reader);
+        Self::lex(buf.bytes())
+    }
+}
+
+impl<I> Iterator for ReadLexer<I>
+where
+    I: Iterator<Item = io::Result<u8>>,
+{
+    type Item = SourceResult<'static>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let invalid = self.check_invalid();
+        if invalid.is_some() {
+            return invalid;
+        }
+        let result = self.lexer.next()?;
+        let invalid = self.check_invalid();
+        invalid.or(Some(result))
     }
 }

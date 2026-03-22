@@ -2,7 +2,10 @@
 
 use std::{
     borrow::{Borrow, BorrowMut},
+    cell::RefCell,
+    collections::VecDeque,
     fmt::{Debug, Display},
+    io,
     iter::{self, Peekable},
     mem,
     ops::{Deref, DerefMut, Index, IndexMut, Range, RangeFrom, RangeFull, RangeTo},
@@ -761,6 +764,63 @@ impl<'a, I: Iterator<Item = AsciiChar>> Segmenter<'a, I> {
                 }
                 accumulated.into()
             }
+        }
+    }
+}
+
+pub(crate) struct FallibleAsciiChars<T, I: Iterator<Item = T>> {
+    bytes: I,
+    invalid: Rc<RefCell<VecDeque<T>>>,
+}
+
+impl<T, I: Iterator<Item = T>> FallibleAsciiChars<T, I> {
+    pub fn new<J: IntoIterator<IntoIter = I>>(bytes: J) -> (Self, Rc<RefCell<VecDeque<T>>>) {
+        let invalid = Rc::new(RefCell::new(VecDeque::with_capacity(1)));
+        let chars = FallibleAsciiChars {
+            bytes: bytes.into_iter(),
+            invalid: Rc::clone(&invalid),
+        };
+        (chars, invalid)
+    }
+}
+
+impl<I> Iterator for FallibleAsciiChars<u8, I>
+where
+    I: Iterator<Item = u8>,
+{
+    type Item = AsciiChar;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            let byte = self.bytes.next()?;
+            if let Ok(ch) = AsciiChar::try_from(byte) {
+                return Some(ch);
+            };
+            let mut invalid = RefCell::borrow_mut(&self.invalid);
+            invalid.push_back(byte);
+        }
+    }
+}
+
+impl<I> Iterator for FallibleAsciiChars<io::Result<u8>, I>
+where
+    I: Iterator<Item = io::Result<u8>>,
+{
+    type Item = AsciiChar;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            let result = self.bytes.next()?;
+            let Ok(byte) = result else {
+                let mut invalid = RefCell::borrow_mut(&self.invalid);
+                invalid.push_back(result);
+                continue;
+            };
+            if let Ok(char) = AsciiChar::try_from(byte) {
+                return Some(char);
+            };
+            let mut invalid = RefCell::borrow_mut(&self.invalid);
+            invalid.push_back(result);
         }
     }
 }
